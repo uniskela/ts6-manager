@@ -61,7 +61,7 @@ describe('radio stream bounded buffer and EOF drain', () => {
     });
     const burst = Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES + BYTES_PER_FRAME, 1);
     stdout.write(burst);
-    assert.ok(b.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES);
+    assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
     assert.equal(b.streamPausedUpstream, true);
     assert.equal(stdout.isPaused(), true);
     assert.ok(await waitUntil(() => b.streamChunksSize <= STREAM_PCM_LOW_WATER_BYTES, 3000));
@@ -71,6 +71,50 @@ describe('radio stream bounded buffer and EOF drain', () => {
     proc.emit('close', 0);
     assert.ok(await waitUntil(() => bot.status === 'connected', 5000));
     bot.clearPlayback();
+  });
+
+  it('hard-caps oversized bursty chunks without discarding PCM', async () => {
+    const { bot, b, stdout, proc } = radioHarness();
+    const overshootFrames = 50;
+    const total = STREAM_PCM_HIGH_WATER_BYTES + BYTES_PER_FRAME * overshootFrames;
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/burst.mp3',
+    });
+    stdout.write(Buffer.alloc(total, 7));
+    assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
+    assert.equal(stdout.isPaused(), true);
+    stdout.end();
+    proc.emit('close', 0);
+    let peakFrames = 0;
+    assert.ok(await waitUntil(() => {
+      peakFrames = Math.max(peakFrames, b.streamFramesSent);
+      return bot.status === 'connected';
+    }, 8000));
+    assert.equal(b.streamChunksSize, 0);
+    const expectedFrames = total / BYTES_PER_FRAME;
+    assert.ok(peakFrames >= expectedFrames - 1, `expected ~${expectedFrames} frames, saw ${peakFrames}`);
+    bot.clearPlayback();
+  });
+
+  it('holds the hard cap under sustained backpressure', async () => {
+    const { bot, b, stdout } = radioHarness();
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/sustain.mp3',
+    });
+    for (let i = 0; i < 30; i++) {
+      stdout.write(Buffer.alloc(BYTES_PER_FRAME * 40, 3));
+      assert.ok(b.streamChunksSize <= STREAM_PCM_HIGH_WATER_BYTES, `overshoot at write ${i}: ${b.streamChunksSize}`);
+    }
+    assert.equal(b.streamPausedUpstream, true);
+    assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
+    const sent = b.streamFramesSent;
+    assert.ok(await waitUntil(() => b.streamFramesSent > sent + 10, 3000));
+    // Backpressure keeps the VoiceBot queue at/under HWM while the tick drains.
+    assert.ok(b.streamChunksSize <= STREAM_PCM_HIGH_WATER_BYTES);
+    assert.equal(stdout.isPaused() || b.streamChunksSize < STREAM_PCM_HIGH_WATER_BYTES, true);
+    bot.clearPlayback();
+    assert.equal(b.streamChunksSize, 0);
+    assert.equal(b.playbackTimer, null);
   });
 
   it('drains queued PCM after EOF for finite media longer than 600ms', async () => {
@@ -143,13 +187,113 @@ describe('radio stream bounded buffer and EOF drain', () => {
       id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
     });
     first.stdout.write(Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES, 1));
-    assert.ok(b.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES);
+    assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
     await bot.playStream({
       id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
     });
     assert.equal(bot.nowPlaying?.id, 'b');
     assert.ok(first.killed >= 1);
     assert.ok(b.streamChunksSize < STREAM_PCM_HIGH_WATER_BYTES);
+    second.stdout.end();
+    second.process.emit('close', 0);
+    assert.ok(await waitUntil(() => bot.status === 'connected', 3000));
+    bot.clearPlayback();
+  });
+});
+
+describe('radio stream source error cleanup', () => {
+  function icyHarness() {
+    const h = radioHarness();
+    let icy = 0;
+    h.b.startIcyPolling = () => { icy = 1; };
+    h.b.stopIcyPolling = () => { icy = 0; };
+    return { ...h, icy: () => icy };
+  }
+
+  async function assertStreamTornDown(bot: VoiceBot, b: any, killed: () => number) {
+    assert.equal(b.streamChunksSize, 0);
+    assert.equal(b.streamStdout, null);
+    assert.equal(b.streamOnData, null);
+    assert.equal(b.streamOnError, null);
+    assert.equal(b.playbackTimer, null);
+    assert.equal(b._isStreaming, false);
+    assert.ok(killed() >= 1);
+    assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
+    assert.equal(bot.mediaSession, null);
+  }
+
+  it('cleans up on source error during active playback', async () => {
+    const { bot, b, proc, killed, icy } = icyHarness();
+    const errors: Error[] = [];
+    bot.on('error', (e: Error) => errors.push(e));
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/live.mp3',
+    });
+    assert.equal(icy(), 1);
+    proc.emit('error', new Error('socket reset'));
+    assert.equal(bot.status, 'error');
+    assert.equal(icy(), 0);
+    assert.equal(errors.length, 1);
+    await assertStreamTornDown(bot, b, killed);
+  });
+
+  it('cleans up on source error while paused', async () => {
+    const { bot, b, stdout, proc, killed, icy } = icyHarness();
+    bot.on('error', () => {});
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/live.mp3',
+    });
+    stdout.write(Buffer.alloc(BYTES_PER_FRAME * 10, 1));
+    bot.pause();
+    assert.equal(bot.status, 'paused');
+    proc.emit('error', new Error('paused source died'));
+    assert.equal(bot.status, 'error');
+    assert.equal(icy(), 0);
+    await assertStreamTornDown(bot, b, killed);
+  });
+
+  it('cleans up on source error while draining buffered PCM', async () => {
+    const { bot, b, stdout, proc, killed, icy } = icyHarness();
+    bot.on('error', () => {});
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
+    });
+    stdout.write(Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES, 1));
+    assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
+    proc.emit('error', new Error('mid-drain failure'));
+    assert.equal(bot.status, 'error');
+    assert.equal(icy(), 0);
+    assert.equal(b.streamChunksSize, 0);
+    await assertStreamTornDown(bot, b, killed);
+  });
+
+  it('ignores stale source error after replacement', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.startIcyPolling = () => {};
+    b.stopIcyPolling = () => {};
+    b.updateNowPlayingNickname = () => {};
+    b.client.sendVoice = () => {};
+    const first = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
+    first.kill = () => { first.killed++; };
+    const second = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
+    second.kill = () => { second.killed++; };
+    let n = 0;
+    b.pipeline.toPcmStream = async () => (++n === 1 ? first : second);
+    await bot.playStream({
+      id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
+    });
+    const staleError = b.streamOnError as (err: Error) => void;
+    const staleEpoch = b.streamStartEpoch;
+    await bot.playStream({
+      id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
+    });
+    assert.notEqual(b.streamStartEpoch, staleEpoch);
+    // Invoke the replaced stream's handler directly (listeners are detached on stop).
+    staleError(new Error('stale'));
+    assert.equal(bot.nowPlaying?.id, 'b');
+    assert.equal(bot.status, 'playing');
+    assert.equal(b._isStreaming, true);
     second.stdout.end();
     second.process.emit('close', 0);
     assert.ok(await waitUntil(() => bot.status === 'connected', 3000));

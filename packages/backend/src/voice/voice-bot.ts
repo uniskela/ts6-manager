@@ -8,7 +8,12 @@ import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, 
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 
-/** ~2s of PCM (s16le stereo @ 48 kHz). Pause stdout when VoiceBot buffer reaches this. */
+/**
+ * Hard cap on VoiceBot-queued PCM (~2s s16le stereo @ 48 kHz).
+ * Incoming chunks are split: only enough bytes to reach this mark are accepted;
+ * the remainder is unshifted onto stdout so ordering is preserved and nothing
+ * is discarded. stdout is paused at/above this mark.
+ */
 export const STREAM_PCM_HIGH_WATER_BYTES = BYTES_PER_FRAME * 100;
 /** ~0.5s of PCM. Resume stdout after drain reaches this. */
 export const STREAM_PCM_LOW_WATER_BYTES = BYTES_PER_FRAME * 25;
@@ -1179,16 +1184,44 @@ export class VoiceBot extends EventEmitter {
   }
 
   private pauseStreamUpstream(): void {
-    if (this.streamPausedUpstream || !this.streamStdout || this.streamSourceEnded) return;
+    if (this.streamPausedUpstream || !this.streamStdout) return;
     this.streamPausedUpstream = true;
     try { this.streamStdout.pause(); } catch { /* ended */ }
   }
 
   private resumeStreamUpstream(): void {
-    if (!this.streamPausedUpstream || !this.streamStdout || this.streamSourceEnded) return;
+    // Still resume after EOF so unshifted remainder can enter the queue.
+    if (!this.streamPausedUpstream || !this.streamStdout) return;
     if (this.streamChunksSize > STREAM_PCM_LOW_WATER_BYTES) return;
     this.streamPausedUpstream = false;
     try { this.streamStdout.resume(); } catch { /* ended */ }
+  }
+
+  /** Pull paused/unshifted stdout bytes into the queue without exceeding HWM. */
+  private flushPausedStreamStdout(): boolean {
+    const stdout = this.streamStdout;
+    if (!stdout) return false;
+    let got = false;
+    for (;;) {
+      const room = STREAM_PCM_HIGH_WATER_BYTES - this.streamChunksSize;
+      if (room <= 0) {
+        this.streamPausedUpstream = true;
+        return got;
+      }
+      let chunk: Buffer | null;
+      try {
+        chunk = stdout.read(room);
+      } catch {
+        break;
+      }
+      if (chunk == null) break;
+      if (!chunk.length) continue;
+      this.streamChunks.push(chunk);
+      this.streamChunksSize += chunk.length;
+      got = true;
+    }
+    this.streamPausedUpstream = false;
+    return got;
   }
 
   private applyStreamBackpressureAfterPush(): void {
@@ -1201,6 +1234,60 @@ export class VoiceBot extends EventEmitter {
     if (this.streamChunksSize <= STREAM_PCM_LOW_WATER_BYTES) {
       this.resumeStreamUpstream();
     }
+  }
+
+  /**
+   * Accept PCM into the VoiceBot queue without exceeding
+   * STREAM_PCM_HIGH_WATER_BYTES. Oversized/bursty chunks are split; unread
+   * bytes go back onto stdout via unshift (no discard, order preserved).
+   */
+  private acceptStreamPcm(chunk: Buffer): void {
+    if (!chunk.length) return;
+    const room = STREAM_PCM_HIGH_WATER_BYTES - this.streamChunksSize;
+    if (room <= 0) {
+      this.pauseStreamUpstream();
+      try { this.streamStdout?.unshift(chunk); } catch { /* ended */ }
+      return;
+    }
+    if (chunk.length <= room) {
+      this.streamChunks.push(chunk);
+      this.streamChunksSize += chunk.length;
+      this.applyStreamBackpressureAfterPush();
+      return;
+    }
+    const head = chunk.subarray(0, room);
+    const rest = chunk.subarray(room);
+    this.streamChunks.push(head);
+    this.streamChunksSize += head.length;
+    this.pauseStreamUpstream();
+    try { this.streamStdout?.unshift(rest); } catch { /* ended */ }
+  }
+
+  /** Tear down the active radio stream after an unexpected source failure. */
+  private failStreamSource(err: Error): void {
+    this.stopIcyPolling();
+    const kill = this.streamKill;
+    this.streamKill = null;
+    try { kill?.(); } catch { /* already dead */ }
+    this.clearTimer();
+    this.detachStreamListeners();
+    this._isStreaming = false;
+    this.streamStdout = null;
+    this.streamPausedUpstream = false;
+    this.streamSourceEnded = true;
+    this.streamChunks = [];
+    this.streamChunksSize = 0;
+    this.streamFramesSent = 0;
+    this.streamItem = null;
+    this.streamFailedClose = true;
+    if (!this._videoStreaming) this.stopAutoStopTimer();
+    try { this.client.sendVoiceStop(); } catch { /* ignore */ }
+    this.endMusicSession('source_unreachable', 'Stream source failed');
+    this._nowPlaying = null;
+    this.resetNickname();
+    this._status = 'error';
+    this.emit('error', err);
+    this.emit('statusChange', this._status);
   }
 
   private finishStreamTrack(item: QueueItem, failed: boolean): void {
@@ -1259,9 +1346,14 @@ export class VoiceBot extends EventEmitter {
       this.sendVoiceFrame(opusFrame);
       this.streamFramesSent++;
     } else if (this.streamSourceEnded) {
-      const item = this.streamItem ?? this._nowPlaying;
-      if (item) this.finishStreamTrack(item, this.streamFailedClose);
-      return;
+      // Unshifted remainder may still sit on a paused stdout after EOF.
+      if (this.flushPausedStreamStdout() || this.streamChunksSize > 0) {
+        this.releaseStreamBackpressureAfterTake();
+      } else {
+        const item = this.streamItem ?? this._nowPlaying;
+        if (item) this.finishStreamTrack(item, this.streamFailedClose);
+        return;
+      }
     }
 
     this.streamNextDue += FRAME_MS;
@@ -1401,39 +1493,41 @@ export class VoiceBot extends EventEmitter {
       this.streamStartEpoch = epoch;
 
       this.streamOnData = (chunk: Buffer) => {
-        if (this.streamStartEpoch !== this.loopEpoch) return;
-        this.streamChunks.push(chunk);
-        this.streamChunksSize += chunk.length;
-        this.applyStreamBackpressureAfterPush();
+        // Capture bind-time epoch — live streamStartEpoch tracks the newest play.
+        if (epoch !== this.loopEpoch) return;
+        this.acceptStreamPcm(chunk);
       };
 
       // Finite VOD used as "radio" can finish wall-clock decode quickly while
-      // PCM is still queued. Drain after EOF; pause stdout at high-water so
-      // memory stays bounded and backpressure reaches the fetcher socket.
+      // PCM is still queued. Drain after EOF; hard-cap the queue at high-water
+      // (partial accept + unshift) so backpressure reaches the fetcher socket.
       this.streamOnClose = (code) => {
-        if (this.streamStartEpoch !== this.loopEpoch) return;
+        if (epoch !== this.loopEpoch) return;
         this.stopIcyPolling();
         this.streamFailedClose = code != null && code !== 0;
         this.streamSourceEnded = true;
         this.streamKill = null;
-        this.streamPausedUpstream = false;
+        // Keep draining unshifted/paused stdout; do not drop the pause flag blindly.
+        if (this.streamStdout?.isPaused()) {
+          this.streamPausedUpstream = true;
+          this.releaseStreamBackpressureAfterTake();
+        } else {
+          this.streamPausedUpstream = false;
+        }
         if (this.streamChunksSize === 0) {
+          if (this.flushPausedStreamStdout()) return;
           this.finishStreamTrack(item, this.streamFailedClose);
         }
       };
 
       this.streamOnError = (err: Error) => {
-        if (this.streamStartEpoch !== this.loopEpoch) return;
+        // Bind-time epoch: a replaced stream's handler must not touch the newer play.
+        if (epoch !== this.loopEpoch) return;
         if (this.recoverAutomatedFailure()) {
           this.emit('error', err);
           return;
         }
-        this._isStreaming = false;
-        this.streamKill = null;
-        this.streamSourceEnded = true;
-        this._status = 'error';
-        this.emit('error', err);
-        this.emit('statusChange', this._status);
+        this.failStreamSource(err);
       };
 
       stream.stdout.on('data', this.streamOnData);
