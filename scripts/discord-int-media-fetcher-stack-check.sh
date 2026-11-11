@@ -295,7 +295,7 @@ if [[ "$KEEP" != "1" ]]; then
   if [[ "$FOREIGN_BEFORE" != "$FOREIGN_AFTER_DOWN" ]]; then
     die "down --remove-orphans affected a foreign Compose project"
   fi
-  for c in "${DISCORD_INT_MEDIA_OWNED_CONTAINERS[@]}"; do
+  for c in $DISCORD_INT_MEDIA_OWNED_CONTAINERS; do
     if docker inspect "$c" >/dev/null 2>&1; then
       die "owned container '$c' still present after project down"
     fi
