@@ -121,6 +121,9 @@ export async function submitMediaFetch(
   }
   const stdout = new PassThrough({ highWaterMark: MEDIA_FETCHER_STDOUT_HIGH_WATER_MARK });
   const proc = new EventEmitter() as ChildProcess;
+  // Always keep one sink so a late socket error after consumers detach cannot
+  // become an uncaught Exception (EventEmitter throws with zero 'error' listeners).
+  proc.on('error', () => {});
   let buf = Buffer.alloc(0);
   let killed = false;
   let jobId = '';
@@ -209,6 +212,8 @@ export async function submitMediaFetch(
   });
   socket.on('error', (err) => {
     stdout.destroy();
+    // VoiceBot (and tests) may have detached; the creation-time sink above
+    // keeps listenerCount >= 1 so this never throws.
     proc.emit('error', err);
   });
   proc.kill = () => {

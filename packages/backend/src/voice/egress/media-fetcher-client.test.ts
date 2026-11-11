@@ -121,6 +121,9 @@ describe('submitMediaFetch', () => {
       });
       assert.equal(Buffer.concat(chunks).toString(), 'pcm');
       assert.equal(spawn.mock.calls.length, 0);
+      // Stand-in process keeps a sink so late emit('error') cannot throw.
+      assert.ok(stream.process.listenerCount('error') >= 1);
+      assert.doesNotThrow(() => stream.process.emit('error', new Error('late-socket')));
     } finally {
       spawn.mock.restore();
       server.close();

@@ -1188,6 +1188,12 @@ export class VoiceBot extends EventEmitter {
     if (this.streamProcess) {
       if (this.streamOnClose) this.streamProcess.off('close', this.streamOnClose);
       if (this.streamOnError) this.streamProcess.off('error', this.streamOnError);
+      // Node throws on emit('error') with zero listeners. A cancelled fetcher
+      // socket can still error after stop/replace — absorb without retaining
+      // VoiceBot state (this.streamProcess is cleared below).
+      if (this.streamProcess.listenerCount('error') === 0) {
+        this.streamProcess.on('error', () => {});
+      }
     }
     this.streamOnData = null;
     this.streamOnClose = null;

@@ -291,25 +291,63 @@ describe('radio stream source error cleanup', () => {
   });
 
   it('ignores stale source error after replacement', async () => {
-    const { bot, b, second } = dualRadioHarness();
+    const { bot, b, first, second } = dualRadioHarness();
+    const reported: Error[] = [];
+    bot.on('error', (e: Error) => reported.push(e));
     await bot.playStream({
       id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
     });
     const staleError = b.streamOnError as (err: Error) => void;
     const staleEpoch = b.streamStartEpoch;
+    const oldProc = first.process;
     await bot.playStream({
       id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
     });
     assert.notEqual(b.streamStartEpoch, staleEpoch);
-    // Invoke the replaced stream's handler directly (listeners are detached on stop).
-    staleError(new Error('stale'));
+    // Epoch guard: saved callback is a no-op for the new session.
+    staleError(new Error('stale-callback'));
+    // Real EventEmitter emission after detach must not throw or touch session B.
+    assert.ok(oldProc.listenerCount('error') >= 1);
+    assert.doesNotThrow(() => oldProc.emit('error', new Error('late-after-replace')));
     assert.equal(bot.nowPlaying?.id, 'b');
     assert.equal(bot.status, 'playing');
     assert.equal(b._isStreaming, true);
+    assert.equal(reported.length, 0);
     second.stdout.end();
     second.process.emit('close', 0);
     assert.ok(await waitUntil(() => bot.status === 'connected', 3000));
     bot.clearPlayback();
+  });
+
+  it('late process error after manual stop does not throw or report', async () => {
+    const { bot, proc } = radioHarness();
+    const reported: Error[] = [];
+    bot.on('error', (e: Error) => reported.push(e));
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/live.mp3',
+    });
+    bot.clearPlayback();
+    assert.equal(bot.status, 'connected');
+    assert.ok(proc.listenerCount('error') >= 1);
+    assert.doesNotThrow(() => proc.emit('error', new Error('late-after-stop')));
+    assert.equal(reported.length, 0);
+    assert.equal(bot.status, 'connected');
+  });
+
+  it('late process error after EOF drain does not throw or report', async () => {
+    const { bot, stdout, proc } = radioHarness();
+    const reported: Error[] = [];
+    bot.on('error', (e: Error) => reported.push(e));
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
+    });
+    stdout.end();
+    proc.emit('close', 0);
+    assert.ok(await waitUntil(() => bot.status === 'connected', 3000));
+    assert.ok(proc.listenerCount('error') >= 1);
+    assert.doesNotThrow(() => proc.emit('error', new Error('late-after-eof')));
+    assert.equal(reported.length, 0);
+    assert.equal(bot.status, 'connected');
   });
 });
 
