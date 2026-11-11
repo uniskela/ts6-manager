@@ -137,7 +137,8 @@ jobs:
   media-cache:
     name: Media cache tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # macOS runners are often queued; 15m was cancelling the job before assignment.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

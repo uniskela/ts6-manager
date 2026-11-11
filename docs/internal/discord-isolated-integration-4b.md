@@ -149,11 +149,27 @@ Radio playback requires the isolated media fetcher. There is no legacy/unrestric
 
 Standalone compose (does not touch production fetcher stacks). Services use `restart: "no"` so the operator controls start/stop.
 
+**Rootless IPC:** host UID/GID and container uid 1000 do not share a bind-mounted mode-600 `jobs.sock` / `.token` (EACCES). Match production: named volumes `discord-int-jobs` / `discord-int-ctl`, and run the INT backend in-compose (`--profile int-backend`, `network_mode: host`, `LISTEN_HOST=127.0.0.1`) so it mounts `/jobs` in the same userns. On rootless Engine 29.x, host networking shares host loopback (needed for disposable TS/WebQuery); bridge `host.docker.internal` cannot reach `127.0.0.1`-only publishes. Do not chmod 777, world-readable tokens, or Docker-socket mounts.
+
+**Interactions:** compose defaults `DISCORD_INTERACTIONS_ENABLED` / `TS6_ISOLATED_LIVE_INTERACTIONS` from `TS6_DISCORD_INT_INTERACTIONS` / `TS6_DISCORD_INT_LIVE` (default false) — not ambient shell `DISCORD_INTERACTIONS_ENABLED`. Supervised enable still requires the process isolation gate (pinned test app id + public key).
+
+**Compose project:** always `-p ts6-discord-int-media` (also set via compose `name:`). Distinct from disposable INT TS (`ts6-discord-int`), production, and D1. Do not use the repository directory's default project name.
+
 ```bash
 umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
-mkdir -p data/discord-int-media-jobs data/discord-int-media-ctl
 # Optional override: MEDIA_FETCHER_SEED_TOKEN_FILE=./.media-fetcher-token-int
-docker compose -f docker-compose.discord-int-media-fetcher.yml up --build
+docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml up --build -d
+# Offline socket/token check (no Discord tunnel):
+./scripts/discord-int-media-fetcher-ipc-check.sh
+# Offline full stack (fetcher+sidecar+backend). Does not kill arbitrary :3011
+# listeners — free the port yourself, or STOP_INT_HOST_BACKEND=1 only after the
+# script verifies a disposable INT-TEST host backend:
+# ./scripts/discord-int-media-fetcher-stack-check.sh
+
+# Supervised #20 prep — INT backend+sidecar from this tree + shared jobs volume:
+# DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
+# DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
+# docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
 ```
 
 Keep seed and installed paths distinct even if backend env is exported into the shell:
@@ -161,15 +177,15 @@ Keep seed and installed paths distinct even if backend env is exported into the 
 | Variable | Role |
 |----------|------|
 | `MEDIA_FETCHER_SEED_TOKEN_FILE` | Compose install input (default `./.media-fetcher-token-int`) |
-| `MEDIA_FETCHER_TOKEN_FILE` | Backend → installed `data/discord-int-media-jobs/.token` |
-| `MEDIA_FETCHER_SOCK` | Backend → installed `data/discord-int-media-jobs/jobs.sock` |
+| `MEDIA_FETCHER_TOKEN_FILE` | Inside INT backend/fetcher containers: `/jobs/.token` |
+| `MEDIA_FETCHER_SOCK` | Inside INT backend/fetcher containers: `/jobs/jobs.sock` |
 
 Landlock, internal `discord_int_fetch` network, token mode 600, and fail-closed client behaviour match production fetcher policy. Do not fall back to in-process ffmpeg.
 
 Tear down after the supervised window:
 
 ```bash
-docker compose -f docker-compose.discord-int-media-fetcher.yml down
+docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
 ```
 
 Do not modify production media-fetcher services.
