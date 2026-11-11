@@ -204,6 +204,9 @@ export class VoiceBot extends EventEmitter {
   private streamChunks: Buffer[] = [];
   private streamChunksSize: number = 0;
   private streamStartTime: number = 0;
+  /** Fetcher/ffmpeg ended; keep ticking until streamChunks drain (finite VOD-as-radio). */
+  private streamSourceEnded = false;
+  private streamFramesSent = 0;
 
   // Nickname "now playing" state
   private _originalNickname: string;
@@ -1146,6 +1149,26 @@ export class VoiceBot extends EventEmitter {
     }
   };
 
+  private finishStreamTrack(item: QueueItem, failed: boolean): void {
+    if (this.streamFramesSent === 0 && this.recoverAutomatedFailure()) return;
+    this.client.sendVoiceStop();
+    this.clearTimer();
+    this._isStreaming = false;
+    this.streamKill = null;
+    this.streamSourceEnded = false;
+    this.streamChunks = [];
+    this.streamChunksSize = 0;
+    this.streamFramesSent = 0;
+
+    const finished = this._nowPlaying;
+    this._nowPlaying = null;
+    this._status = 'connected';
+    this.endMusicSession('source_ended', 'Stream ended');
+    this.emit('statusChange', this._status);
+    this.emit('trackEnd', finished ?? item);
+    this.automation?.sourceEnded({ failed });
+  }
+
   private finishFileTrack(): void {
     if (this.fileFramesSent === 0 && this.recoverAutomatedFailure()) return;
     this.client.sendVoiceStop();
@@ -1244,6 +1267,8 @@ export class VoiceBot extends EventEmitter {
     this._isStreaming = true;
     this._status = 'playing';
     this.streamStartTime = Date.now();
+    this.streamSourceEnded = false;
+    this.streamFramesSent = 0;
     this.emit('statusChange', this._status);
     this.emit('nowPlaying', item);
     this.updateNowPlayingNickname(item.title);
@@ -1260,8 +1285,7 @@ export class VoiceBot extends EventEmitter {
       this.streamChunksSize = 0;
 
       const epoch = ++this.loopEpoch;
-      let framesSent = 0;
-      const startTime = performance.now();
+      let failedClose = false;
 
       stream.stdout.on('data', (chunk: Buffer) => {
         if (epoch !== this.loopEpoch) return;
@@ -1269,19 +1293,21 @@ export class VoiceBot extends EventEmitter {
         this.streamChunksSize += chunk.length;
       });
 
+      // Finite VOD used as "radio" can finish wall-clock decode in a few seconds
+      // while minutes of PCM are buffered. Drain like file playback — do not
+      // stopPlayback() on close or audible radio cuts off early.
       stream.process.on('close', (code) => {
         if (epoch !== this.loopEpoch) return;
         this.stopIcyPolling();
-        this.stopPlayback();
-        this.client.sendVoiceStop();
-        this._isStreaming = false;
-        this.streamKill = null;
-        this._nowPlaying = null;
-        this._status = 'connected';
-        this.endMusicSession('source_ended', 'Stream ended');
-        this.emit('statusChange', this._status);
-        this.emit('trackEnd', item);
-        this.automation?.sourceEnded({ failed: code != null && code !== 0 });
+        failedClose = code != null && code !== 0;
+        this.streamSourceEnded = true;
+        if (this.streamKill) {
+          this.streamKill = null;
+        }
+        // No buffered audio left → finish now (Auto-DJ short-close / drained).
+        if (this.streamChunksSize === 0) {
+          this.finishStreamTrack(item, failedClose);
+        }
       });
 
       stream.process.on('error', (err) => {
@@ -1292,6 +1318,7 @@ export class VoiceBot extends EventEmitter {
         }
         this._isStreaming = false;
         this.streamKill = null;
+        this.streamSourceEnded = true;
         this._status = 'error';
         this.emit('error', err);
         this.emit('statusChange', this._status);
@@ -1317,10 +1344,20 @@ export class VoiceBot extends EventEmitter {
         }
 
         // Send exactly one frame if available
-        const frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
+        let frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
+        if (!frame && this.streamSourceEnded && this.streamChunksSize > 0) {
+          const raw = this.takeFromStreamChunks(this.streamChunksSize)!;
+          const padded = Buffer.alloc(BYTES_PER_FRAME, 0);
+          raw.copy(padded);
+          frame = padded;
+        }
         if (frame) {
           const opusFrame = this.pipeline.encodeFrame(frame, this.config.volume);
           this.sendVoiceFrame(opusFrame);
+          this.streamFramesSent++;
+        } else if (this.streamSourceEnded) {
+          this.finishStreamTrack(item, failedClose);
+          return;
         }
 
         // Next slot
@@ -1738,6 +1775,8 @@ export class VoiceBot extends EventEmitter {
       this.streamKill = null;
     }
     this._isStreaming = false;
+    this.streamSourceEnded = false;
+    this.streamFramesSent = 0;
     this.streamChunks = [];
     this.streamChunksSize = 0;
   }

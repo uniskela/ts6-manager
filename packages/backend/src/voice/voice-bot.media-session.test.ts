@@ -27,6 +27,45 @@ function fakeMusic(bot: VoiceBot) {
   b._nowPlaying = { id: '1', title: 'Neon Skyline', source: 'local', filePath: '/x.mp3' };
 }
 
+describe('radio stream drain after fetcher EOF', () => {
+  it('keeps playing buffered PCM after process close instead of cutting off', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.startIcyPolling = () => {};
+    b.updateNowPlayingNickname = () => {};
+    b.client.sendVoice = () => {};
+    const stdout = new PassThrough({ highWaterMark: 1024 * 1024 });
+    const proc = new EventEmitter() as any;
+    b.pipeline.toPcmStream = async () => ({
+      stdout,
+      process: proc,
+      kill: () => {},
+    });
+    // ~600 ms of PCM so the test stays short; still enough to prove drain-after-close.
+    const frames = 30;
+    const pcm = Buffer.alloc(BYTES_PER_FRAME * frames, 1);
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
+    });
+    stdout.write(pcm);
+    stdout.end();
+    proc.emit('close', 0);
+    assert.equal(bot.status, 'playing');
+    assert.equal(b.streamSourceEnded, true);
+    assert.ok(b.streamChunksSize > 0, 'buffered PCM must remain after EOF');
+    let peakFrames = 0;
+    const until = Date.now() + 1500;
+    while (Date.now() < until && bot.status === 'playing') {
+      peakFrames = Math.max(peakFrames, b.streamFramesSent);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(bot.status, 'connected');
+    assert.equal(b.streamChunksSize, 0);
+    assert.ok(peakFrames >= frames - 1, `expected ~${frames} frames drained, saw ${peakFrames}`);
+    bot.clearPlayback();
+  });
+});
+
 describe('stale radio startup', () => {
   for (const outcome of ['opened', 'failed']) for (const newer of [false, true]) {
     it(`discards an ${outcome} stream after ${newer ? 'replacement' : 'stop'}`, async () => {
