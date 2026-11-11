@@ -127,11 +127,20 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 
 ### Targeted live retest (after GO)
 
-1. Re-register guild commands so `/playlist tracks` is present.
-2. Start INT-only media fetcher (`-p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml`; named jobs volume + `--profile int-backend` under rootless — not host bind mounts). Offline: `./scripts/discord-int-media-fetcher-ipc-check.sh`. **#20 PASS requires audible radio**, not only the unavailable message.
-3. Confirm a viewer-only member (VIEWER role, no ADMIN roles) before #5/#21.
-4. #18: `/playlist add` → `/playlist tracks` → remove by `#N` or displayed host title after enrichment (positions must match).
-5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml down`.
+Preserve the previous **17 PASS** rows. Retest **only** #5, #18, #20, #21 — do not substitute join/leave or allowlist checks.
+
+| # | Command | Expect |
+|---|---------|--------|
+| 5 | Viewer `/ts status` | Genuine viewer-only identity gets permission denial; admin still permitted |
+| 18 | `/playlist remove` | Admin adds disposable track → `/playlist tracks` shows title + position → remove by displayed title after enrichment **and** by `#N`; confirm intended track removed |
+| 20 | `/radio play` | Isolated INT media-fetcher + containerised backend; disposable station; **operator-confirmed audible** in TeamSpeak (unavailable message ≠ PASS) |
+| 21 | Viewer `/playlist create` | Genuine viewer-only identity denied; no unauthorised playlist created |
+
+1. Dry-run then (only when authorised) re-register guild commands so `/playlist tracks` is present.
+2. Start INT-only media fetcher + containerised backend (`-p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml` with named jobs volume + `--profile int-backend` under rootless — not host bind mounts). Offline: `./scripts/discord-int-media-fetcher-ipc-check.sh`. Keep interactions OFF until GO.
+3. Confirm a genuine viewer-only member (VIEWER role, no ADMIN roles) before #5/#21 — do **not** impersonate by stripping the guild owner's roles.
+4. After the four-row session: record PASS/FAIL/NOT TESTED per row, then shutdown.
+5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down`. Expect **no** `:3011` listener afterward.
 
 ### 5. Remove Interactions URL and stop the tunnel
 
@@ -139,14 +148,14 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 2. Stop cloudflared / tunnel process (it must have targeted `:3012`, never `:3011`).
 3. Stop the path-filter process on `:3012`.
 4. Set `DISCORD_INTERACTIONS_ENABLED=false` (and clear live latch if set); restart backend.
-5. `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml down` (stops all INT-only fetcher/proxy containers; not `ts6-discord-int` TS).
-6. Confirm `curl -sS http://127.0.0.1:3011/api/health` still ok and interactions remain off in env.
+5. `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down` (stops INT-only fetcher/proxy **and** the containerised INT backend; not `ts6-discord-int` TS).
+6. Confirm port `3011` has **no** test listener (`ss -ltn | grep 3011` empty / `curl` connection refused). Do **not** expect `/api/health` from a stopped INT backend. Confirm `DISCORD_INTERACTIONS_ENABLED=false` (and live latch unset) remains in env.
 
 ### 6. Verify isolated environment is clean
 
 - [ ] Interactions URL empty on INT-TEST app (not production).
 - [ ] Tunnel process gone; no public hostname left configured.
-- [ ] `DISCORD_INTERACTIONS_ENABLED=false`; backend still `LISTEN_HOST=127.0.0.1`.
+- [ ] `DISCORD_INTERACTIONS_ENABLED=false` (and live latch unset) in env; if a backend is left running for further prep it must stay `LISTEN_HOST=127.0.0.1`. After full INT compose `--profile int-backend down`, expect **no** `:3011` listener.
 - [ ] No global slash registration performed.
 - [ ] Optional: remove throwaway `live-smoke` playlist; keep or drop disposable radio station.
 - [ ] Do not grant Tailscale access to the development VPS for volunteers.
