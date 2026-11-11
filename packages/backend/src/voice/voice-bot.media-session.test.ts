@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
-import { VoiceBot } from './voice-bot.js';
+import { VoiceBot, STREAM_PCM_HIGH_WATER_BYTES, STREAM_PCM_LOW_WATER_BYTES } from './voice-bot.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import { MediaSessionConflictError } from './media-session.js';
 import { AppError } from '../middleware/error-handler.js';
@@ -27,22 +27,56 @@ function fakeMusic(bot: VoiceBot) {
   b._nowPlaying = { id: '1', title: 'Neon Skyline', source: 'local', filePath: '/x.mp3' };
 }
 
-describe('radio stream drain after fetcher EOF', () => {
-  it('keeps playing buffered PCM after process close instead of cutting off', async () => {
-    const bot = makeBot();
-    const b = bot as any;
-    b.startIcyPolling = () => {};
-    b.updateNowPlayingNickname = () => {};
-    b.client.sendVoice = () => {};
-    const stdout = new PassThrough({ highWaterMark: 1024 * 1024 });
-    const proc = new EventEmitter() as any;
-    b.pipeline.toPcmStream = async () => ({
-      stdout,
-      process: proc,
-      kill: () => {},
+function radioHarness() {
+  const bot = makeBot();
+  const b = bot as any;
+  b.startIcyPolling = () => {};
+  b.updateNowPlayingNickname = () => {};
+  b.client.sendVoice = () => {};
+  const stdout = new PassThrough({ highWaterMark: 1024 * 1024 });
+  const proc = new EventEmitter() as any;
+  let killed = 0;
+  b.pipeline.toPcmStream = async () => ({
+    stdout,
+    process: proc,
+    kill: () => { killed++; },
+  });
+  return { bot, b, stdout, proc, killed: () => killed };
+}
+
+async function waitUntil(pred: () => boolean, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return pred();
+}
+
+describe('radio stream bounded buffer and EOF drain', () => {
+  it('pauses stdout at high-water and resumes after drain to low-water', async () => {
+    const { bot, b, stdout, proc } = radioHarness();
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
     });
-    // ~600 ms of PCM so the test stays short; still enough to prove drain-after-close.
-    const frames = 30;
+    const burst = Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES + BYTES_PER_FRAME, 1);
+    stdout.write(burst);
+    assert.ok(b.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES);
+    assert.equal(b.streamPausedUpstream, true);
+    assert.equal(stdout.isPaused(), true);
+    assert.ok(await waitUntil(() => b.streamChunksSize <= STREAM_PCM_LOW_WATER_BYTES, 3000));
+    assert.equal(b.streamPausedUpstream, false);
+    assert.equal(stdout.isPaused(), false);
+    stdout.end();
+    proc.emit('close', 0);
+    assert.ok(await waitUntil(() => bot.status === 'connected', 5000));
+    bot.clearPlayback();
+  });
+
+  it('drains queued PCM after EOF for finite media longer than 600ms', async () => {
+    const { bot, b, stdout, proc } = radioHarness();
+    // ~2s of PCM (under high-water so it stays queued after a single write).
+    const frames = 100;
     const pcm = Buffer.alloc(BYTES_PER_FRAME * frames, 1);
     await bot.playStream({
       id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
@@ -52,16 +86,73 @@ describe('radio stream drain after fetcher EOF', () => {
     proc.emit('close', 0);
     assert.equal(bot.status, 'playing');
     assert.equal(b.streamSourceEnded, true);
-    assert.ok(b.streamChunksSize > 0, 'buffered PCM must remain after EOF');
+    assert.ok(b.streamChunksSize > 0);
     let peakFrames = 0;
-    const until = Date.now() + 1500;
-    while (Date.now() < until && bot.status === 'playing') {
+    assert.ok(await waitUntil(() => {
       peakFrames = Math.max(peakFrames, b.streamFramesSent);
-      await new Promise((r) => setTimeout(r, 20));
-    }
+      return bot.status === 'connected';
+    }, 4000));
+    assert.equal(b.streamChunksSize, 0);
+    assert.ok(peakFrames >= frames - 1, `expected ~${frames} frames, saw ${peakFrames}`);
+    bot.clearPlayback();
+  });
+
+  it('finishes immediately on EOF with an empty buffer', async () => {
+    const { bot, b, stdout, proc } = radioHarness();
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
+    });
+    stdout.end();
+    proc.emit('close', 0);
     assert.equal(bot.status, 'connected');
     assert.equal(b.streamChunksSize, 0);
-    assert.ok(peakFrames >= frames - 1, `expected ~${frames} frames drained, saw ${peakFrames}`);
+    bot.clearPlayback();
+  });
+
+  it('manual stop while draining clears buffer and listeners', async () => {
+    const { bot, b, stdout, proc, killed } = radioHarness();
+    const frames = 80;
+    await bot.playStream({
+      id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/finite.mp3',
+    });
+    stdout.write(Buffer.alloc(BYTES_PER_FRAME * frames, 1));
+    stdout.end();
+    proc.emit('close', 0);
+    assert.equal(bot.status, 'playing');
+    bot.clearPlayback();
+    assert.equal(bot.status, 'connected');
+    assert.equal(b.streamChunksSize, 0);
+    assert.equal(b.streamStdout, null);
+    assert.equal(b.streamOnData, null);
+    assert.ok(killed() >= 1 || b.streamKill === null);
+  });
+
+  it('replacement discards previous buffered audio', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.startIcyPolling = () => {};
+    b.updateNowPlayingNickname = () => {};
+    b.client.sendVoice = () => {};
+    const first = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
+    first.kill = () => { first.killed++; };
+    const second = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
+    second.kill = () => { second.killed++; };
+    let n = 0;
+    b.pipeline.toPcmStream = async () => (++n === 1 ? first : second);
+    await bot.playStream({
+      id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
+    });
+    first.stdout.write(Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES, 1));
+    assert.ok(b.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES);
+    await bot.playStream({
+      id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
+    });
+    assert.equal(bot.nowPlaying?.id, 'b');
+    assert.ok(first.killed >= 1);
+    assert.ok(b.streamChunksSize < STREAM_PCM_HIGH_WATER_BYTES);
+    second.stdout.end();
+    second.process.emit('close', 0);
+    assert.ok(await waitUntil(() => bot.status === 'connected', 3000));
     bot.clearPlayback();
   });
 });
