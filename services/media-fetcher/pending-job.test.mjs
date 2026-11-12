@@ -1,13 +1,16 @@
 /**
  * Disconnect during async submit startup must abandon proxy/shim/ffmpeg
- * before a live job is published.
+ * before a live job is published — including when ctl registration resolves
+ * after teardown.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   abandonPending,
+  clearUnregisteredJobId,
   continueIfClientAlive,
   createPendingJob,
+  noteProxyRegistered,
 } from './pending-job.mjs';
 
 function life(done) {
@@ -44,7 +47,6 @@ describe('pending job startup abort', () => {
     const closed = [];
     pending.shim = { close: async () => { closed.push('shim'); } };
 
-    // Simulate: disconnect landed during await startShim
     assert.equal(await continueIfClientAlive(life(true), pending, {
       killTree: () => {},
       revokeJob: async (id) => { revoked.push(id); },
@@ -103,15 +105,100 @@ describe('pending job startup abort', () => {
     assert.deepEqual(revoked, ['race']);
   });
 
-  it('does not create a live job after disconnect during proxy registration', async () => {
-    const jobs = new Map();
+  it('retains jobId when disconnect hits before registration completes', async () => {
     const pending = createPendingJob();
     pending.jobId = 'early';
-    // Disconnect before proxyRegistered flips true — nothing to revoke.
     assert.equal(await continueIfClientAlive(life(true), pending, {
       killTree: () => {},
-      revokeJob: async () => { throw new Error('should not revoke'); },
+      revokeJob: async () => { throw new Error('should not revoke before 201'); },
     }), false);
+    assert.equal(pending.abandoned, true);
+    assert.equal(pending.jobId, 'early');
+    assert.equal(pending.proxyRegistered, false);
+  });
+});
+
+describe('deferred proxy registration after disconnect', () => {
+  it('revokes exactly once when HTTP 201 arrives after teardown', async () => {
+    const revoked = [];
+    const jobs = new Map();
+    const pending = createPendingJob();
+    pending.jobId = 'late-grant';
+    const helpers = {
+      killTree: () => {},
+      revokeJob: async (id) => { revoked.push(id); },
+    };
+
+    // 1) Begin registration but keep it unresolved.
+    let resolveReg;
+    const regPromise = new Promise((resolve) => { resolveReg = resolve; });
+
+    // 2) Socket teardown while ctl is in flight.
+    await abandonPending(pending, helpers);
+    assert.equal(pending.abandoned, true);
+    assert.equal(pending.jobId, 'late-grant');
+    assert.deepEqual(revoked, []);
+
+    // 3) No live job published.
     assert.equal(jobs.size, 0);
+
+    // 4) Registration succeeds with HTTP 201 after disconnect.
+    resolveReg({ status: 201 });
+    const reg = await regPromise;
+    assert.equal(reg.status, 201);
+    assert.equal(await noteProxyRegistered(pending, helpers), false);
+
+    // 5–6) Grant revoked once; pending released.
+    assert.deepEqual(revoked, ['late-grant']);
+    assert.equal(pending.jobId, null);
+    assert.equal(pending.proxyRegistered, false);
+    assert.equal(pending.shim, null);
+    assert.equal(pending.child, null);
+
+    // 7) A subsequent job can start (fresh pending).
+    const next = createPendingJob();
+    next.jobId = 'after-late';
+    assert.equal(await noteProxyRegistered(next, helpers), true);
+    assert.equal(next.proxyRegistered, true);
+    assert.deepEqual(revoked, ['late-grant']);
+    jobs.set(next.jobId, { id: next.jobId });
+    assert.equal(jobs.size, 1);
+  });
+
+  it('does not revoke when registration is rejected after disconnect', async () => {
+    const revoked = [];
+    const pending = createPendingJob();
+    pending.jobId = 'reject-late';
+    const helpers = {
+      killTree: () => {},
+      revokeJob: async (id) => { revoked.push(id); },
+    };
+    await abandonPending(pending, helpers);
+    assert.equal(pending.jobId, 'reject-late');
+    clearUnregisteredJobId(pending);
+    assert.equal(pending.jobId, null);
+    assert.deepEqual(revoked, []);
+  });
+
+  it('concurrent noteProxyRegistered and abandonPending revoke once', async () => {
+    const revoked = [];
+    const pending = createPendingJob();
+    pending.jobId = 'concurrent';
+    const helpers = {
+      killTree: () => {},
+      revokeJob: async (id) => {
+        revoked.push(id);
+        await new Promise((r) => setTimeout(r, 5));
+      },
+    };
+    // Registration completes and teardown race.
+    const a = noteProxyRegistered(pending, helpers);
+    const b = abandonPending(pending, helpers);
+    await Promise.all([a, b]);
+    // Either noteProxyRegistered saw abandoned after setting flag, or abandon
+    // saw proxyRegistered — grant cleaned exactly once.
+    assert.deepEqual(revoked, ['concurrent']);
+    assert.equal(pending.jobId, null);
+    assert.equal(pending.proxyRegistered, false);
   });
 });

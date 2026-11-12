@@ -10,8 +10,10 @@ import { peerPid } from './peer-pid.mjs';
 import { allocateJobId, allowTlsConnect, constrainRadioPorts, parseJobId } from './policy.mjs';
 import {
   abandonPending,
+  clearUnregisteredJobId,
   continueIfClientAlive,
   createPendingJob,
+  noteProxyRegistered,
 } from './pending-job.mjs';
 import { attachClientSocketLifecycle } from './socket-guards.mjs';
 import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
@@ -285,15 +287,20 @@ async function handle(socket) {
         id: jobId, token: jobToken, hosts, ports, connect: allowTlsConnect(msg.url),
       });
       if (reg.status === 409) {
-        pending.jobId = null;
-        socket.end(JSON.stringify({ ok: false, error: 'duplicate-job' }) + '\n');
+        clearUnregisteredJobId(pending);
+        if (!life.done) {
+          socket.end(JSON.stringify({ ok: false, error: 'duplicate-job' }) + '\n');
+        }
         return;
       }
       if (reg.status !== 201) throw new Error('proxy register');
-      pending.proxyRegistered = true;
+      // Late 201 after disconnect must still revoke (jobId retained through abandon).
+      if (!(await noteProxyRegistered(pending, pendingHelpers))) return;
     } catch {
-      pending.jobId = null;
-      socket.end(JSON.stringify({ ok: false, error: 'proxy-unavailable' }) + '\n');
+      clearUnregisteredJobId(pending);
+      if (!life.done) {
+        socket.end(JSON.stringify({ ok: false, error: 'proxy-unavailable' }) + '\n');
+      }
       return;
     }
     if (!(await continueIfClientAlive(life, pending, pendingHelpers))) return;
@@ -328,6 +335,7 @@ async function handle(socket) {
     pending.shim = null;
     pending.proxyRegistered = false;
     pending.jobId = null;
+    pending.abandoned = false;
     if (life.done) {
       await finish(job);
       return;
