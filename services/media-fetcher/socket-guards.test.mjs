@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import {
   attachClientSocketLifecycle,
   EXPECTED_CLIENT_DISCONNECT_CODES,
+  formatClientSocketError,
   isExpectedClientDisconnect,
 } from './socket-guards.mjs';
 
@@ -128,10 +129,26 @@ describe('attachClientSocketLifecycle', () => {
       onTeardown: (r) => { reasons.push(r); },
       log: (line) => { logs.push(line); },
     });
-    socket.emit('error', Object.assign(new Error('ENOSPC disk full'), { code: 'ENOSPC' }));
+    socket.emit('error', Object.assign(
+      new Error('connect EACCES https://secret.example/token=abc'),
+      { code: 'EACCES', errno: -13 },
+    ));
     assert.deepEqual(reasons, ['error']);
-    assert.match(logs[0], /FETCHER client-socket error ENOSPC/);
-    assert.doesNotMatch(logs.join('\n'), /token|https?:\/\//i);
+    assert.equal(logs[0], formatClientSocketError({ code: 'EACCES', errno: -13 }));
+    assert.match(logs[0], /FETCHER client-socket error EACCES errno=-13/);
+    assert.doesNotMatch(logs.join('\n'), /token|secret\.example|https?:\/\//i);
+  });
+});
+
+describe('formatClientSocketError', () => {
+  it('never includes err.message', () => {
+    const line = formatClientSocketError({
+      code: 'EPROTO',
+      errno: -71,
+      message: 'write https://user:pass@host/path?token=xyz failed',
+    });
+    assert.equal(line, 'FETCHER client-socket error EPROTO errno=-71');
+    assert.doesNotMatch(line, /user:pass|token=|https?:\/\//i);
   });
 });
 

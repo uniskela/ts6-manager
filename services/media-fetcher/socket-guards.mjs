@@ -17,9 +17,18 @@ export function isExpectedClientDisconnect(err) {
   return EXPECTED_CLIENT_DISCONNECT_CODES.has(code);
 }
 
+/** Stable code only — never err.message (may contain URLs/tokens). */
+export function formatClientSocketError(err) {
+  const code = (err && typeof err.code === 'string' && err.code) || 'unknown';
+  const errno = err && Number.isInteger(err.errno) ? err.errno : null;
+  return errno !== null
+    ? `FETCHER client-socket error ${code} errno=${errno}`
+    : `FETCHER client-socket error ${code}`;
+}
+
 /**
  * Register error + close handlers once. `onTeardown` runs at most once.
- * Logs code/message only — never tokens or source URLs.
+ * Logs codes/errno only — never tokens or source URLs.
  */
 export function attachClientSocketLifecycle(socket, {
   onTeardown,
@@ -37,9 +46,7 @@ export function attachClientSocketLifecycle(socket, {
     if (isExpectedClientDisconnect(err)) {
       log(`FETCHER client disconnect ${err.code}`);
     } else {
-      const code = (err && err.code) || 'unknown';
-      const msg = err && typeof err.message === 'string' ? err.message.slice(0, 120) : '';
-      log(`FETCHER client-socket error ${code}${msg ? ` ${msg}` : ''}`);
+      log(formatClientSocketError(err));
     }
     teardown('error');
   });

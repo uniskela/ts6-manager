@@ -110,6 +110,36 @@ if (op === 'hold-cancel') {
   process.exit(0);
 }
 
+/** Destroy during submit startup (before/while header) — no live job leak. */
+if (op === 'abrupt-during-start') {
+  const jobId = arg('id', 'early1');
+  const started = net.connect(sockPath);
+  started.on('error', () => {});
+  started.on('connect', () => {
+    started.write(JSON.stringify({
+      op: 'submit', token, jobId, url: arg('url'),
+      hosts: ['origin'], ports: arg('ports', '8000').split(',').map(Number),
+    }) + '\n');
+    started.destroy();
+  });
+  await new Promise((r) => setTimeout(r, Number(arg('ms', '1500'))));
+  const status = await rpc({ op: 'status' });
+  const again = await rpc({
+    op: 'submit',
+    jobId: arg('next', 'after-early'),
+    url: arg('next-url', arg('url')),
+    hosts: ['origin'],
+    ports: arg('ports', '8000').split(',').map(Number),
+  }, { collectPcm: true, timeoutMs: Number(arg('timeout', '15000')) });
+  const jobsAfter = status.header?.jobs || [];
+  process.stdout.write(JSON.stringify({
+    statusAfter: status.header,
+    cleared: !jobsAfter.includes(jobId),
+    next: { header: again.header, bytes: again.bytes },
+  }) + '\n');
+  process.exit(status.header?.ok && !jobsAfter.includes(jobId) && again.header?.ok && again.bytes > 0 ? 0 : 1);
+}
+
 /** Abrupt peer destroy mid-stream (backend /stop). Fetcher must stay alive. */
 if (op === 'abrupt-stop') {
   const jobId = arg('id', 'abrupt1');
