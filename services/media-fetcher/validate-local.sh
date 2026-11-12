@@ -89,7 +89,7 @@ const req=http.request({socketPath:"/ctl/proxy.sock",path:"/jobs",method:"POST",
   let b="";res.on("data",c=>b+=c);res.on("end",()=>process.stdout.write(JSON.stringify({status:res.statusCode,body:b})));
 });
 req.on("error",e=>{process.stdout.write(JSON.stringify({error:e.message}));});
-req.end(JSON.stringify({id:"evil",token:"0123456789abcdef",ports:[80],connect:true}));
+req.end(JSON.stringify({id:"evil",token:"ts6-evil-token-x",ports:[80],connect:true}));
 ')
 echo "$CTL_UNAUTH" | grep -q '"status":401' || fail "ctl unauth $CTL_UNAUTH"
 CTL_SNAP=$(docker run --rm --user node --network "${P}_fetch" --security-opt=no-new-privileges \

@@ -18,9 +18,9 @@ describe('fetcher token mode', () => {
   });
 
   it('compares tokens in constant time', () => {
-    assert.equal(tokensEqual('0123456789abcdef', '0123456789abcdef'), true);
-    assert.equal(tokensEqual('0123456789abcdef', '0123456789abcdee'), false);
-    assert.equal(tokensEqual('short', '0123456789abcdef'), false);
+    assert.equal(tokensEqual('ts6-evil-token-x', 'ts6-evil-token-x'), true);
+    assert.equal(tokensEqual('ts6-evil-token-x', 'ts6-evil-token-y'), false);
+    assert.equal(tokensEqual('short', 'ts6-evil-token-x'), false);
     assert.equal(tokensEqual('', ''), true);
   });
 
@@ -29,7 +29,7 @@ describe('fetcher token mode', () => {
     const src = join(dir, 'src');
     const dest = join(dir, 'dest');
     const ctlDest = join(dir, 'ctl');
-    writeFileSync(src, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
+    writeFileSync(src, 'ts6-fetcher-test-token-xxxxxxxx', { mode: 0o600 });
     const ok = spawnSync(process.execPath, [join(here, 'install-token.mjs')], {
       env: { ...process.env, TOKEN_SRC: src, TOKEN_DEST: dest, CTL_TOKEN_DEST: ctlDest },
       encoding: 'utf8',

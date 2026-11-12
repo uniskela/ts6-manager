@@ -354,3 +354,6 @@
 - Playlist scoped name uniqueness (`playlist_name_key` migration) applies to TS and Discord playlist create/import paths.
 - Music bot delete detaches Discord guild bindings first (P1-1); Restrict FK retained.
 
+## Path A CI adaptation (post file-set)
+
+- Replaced gitleaks-flagged hex fixture tokens in `media-fetcher-client.test.ts`, `validate-local.sh`, and `token.test.mjs` with obvious `ts6-*-token-*` placeholders (behaviour unchanged; Path A introduces these lines as a new commit vs main).
