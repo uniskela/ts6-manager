@@ -3,7 +3,7 @@
 - Base: `origin/main` @ `2359748ff41cc862784cb7e6ebf40f70330dbf88`
 - Source tip: integration `1de19c86c23af49c5d4f9a45425ad97915c679f0`
 - Method: file-set checkout (not 144-commit cherry-pick)
-- Included paths: 188 changed vs origin/main; table 189 rows including net-zero `pnpm-workspace.yaml`
+- Included paths: 189 changed vs origin/main; table 190 rows including net-zero `pnpm-workspace.yaml`
 - Explicitly excluded D1 paths: 150
 
 ## Exclusions (D1 / unfinished bridge)
@@ -316,6 +316,7 @@
 | `packages/backend/prisma/SCHEMA_VERSION` | phase-2-adapted | Schema startup | Bumped for playlist nameKey finalisation marker |
 | `packages/backend/src/discord-command/prod-db-target.test.ts` | phase-2-new | Production guild-bind | Allowlist tests; no allow-any bypass |
 | `packages/backend/src/discord-command/prod-db-target.ts` | phase-2-new | Production guild-bind | Explicit `ts6webui.db` allowlist |
+| `packages/backend/src/discord-command/prod-guild-bind-audit.ts` | phase-2-new | Production guild-bind | Audit log preflight + append; fail-loud after mutation |
 | `packages/backend/src/discord-command/prod-guild-bind-cli.ts` | phase-2-new | Production guild-bind | Preview/confirm/audit CLI separate from isolated-db tooling |
 | `packages/backend/src/discord-command/prod-guild-bind.test.ts` | phase-2-new | Production guild-bind | Disposable DB bind/revoke tests |
 | `packages/backend/src/discord-command/prod-guild-bind.ts` | phase-2-new | Production guild-bind | Operator + app/guild verification; preview before write |

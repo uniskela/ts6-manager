@@ -1,18 +1,27 @@
 /**
- * Production Discord guild-binding CLI (disposable or allowlisted prod DB only).
+ * Production Discord guild-binding CLI (allowlisted existing DB only).
  *
  * Usage (from packages/backend):
- *   node --import tsx src/discord-command/prod-guild-bind-cli.ts status \
- *     --database-url file:./data/ts6webui.db \
+ *   node --import tsx src/discord-command/prod-guild-bind-cli.ts preview-bind \
+ *     --database-url file:/abs/path/data/ts6webui.db \
  *     --operator alice --application-id 123 --guild-id 456
- *   ... preview-bind / bind / revoke with the same identity flags
  *
- * Mutations require --confirm-write. There is no --allow-any-database.
+ * Writes require ALL of:
+ *   --confirm-write
+ *   --confirm-database-realpath <exact fs.realpath of that ts6webui.db>
+ *   --audit-log <append-only jsonl path>
+ *
+ * Trust model: --operator is self-declared attribution, not authentication.
+ * OS/container filesystem permissions on the confirmed DB path are the control
+ * plane. There is no --allow-any-database.
  */
-import { appendFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { applyProdGuildBinding, previewProdGuildBinding } from './prod-guild-bind.js';
 import { assessProdGuildBindDatabaseUrl, formatProdDbTarget } from './prod-db-target.js';
+import {
+  appendProdGuildBindAudit,
+  preflightProdGuildBindAuditLog,
+} from './prod-guild-bind-audit.js';
 
 const require = createRequire(import.meta.url);
 
@@ -41,12 +50,19 @@ async function main(): Promise<void> {
   const applicationId = requireArg(argv, '--application-id');
   const guildId = requireArg(argv, '--guild-id');
   const confirmWrite = argv.includes('--confirm-write');
+  const confirmRealpath = argValue(argv, '--confirm-database-realpath');
   const auditLog = argValue(argv, '--audit-log');
 
-  const target = assessProdGuildBindDatabaseUrl(databaseUrl);
+  const target = assessProdGuildBindDatabaseUrl(databaseUrl, {
+    requireExisting: true,
+    confirmRealpath: confirmWrite ? confirmRealpath : undefined,
+  });
   console.log(formatProdDbTarget(target));
   if (!target.ok) {
-    console.error('Refusing: database target is not allowlisted for production guild-bind.');
+    console.error('Refusing: database target is not allowlisted / confirmed for production guild-bind.');
+    if (target.realPath && !confirmRealpath) {
+      console.error(`Hint: pass --confirm-database-realpath ${target.realPath}`);
+    }
     process.exit(2);
   }
 
@@ -64,13 +80,34 @@ async function main(): Promise<void> {
         instanceId: argValue(argv, '--instance-id'),
         serverConfigId: argValue(argv, '--server-config-id') ? Number(argValue(argv, '--server-config-id')) : undefined,
         musicBotId: argValue(argv, '--music-bot-id') ? Number(argValue(argv, '--music-bot-id')) : undefined,
+        confirmRealpath,
       });
       console.log(JSON.stringify(preview, null, 2));
+      if (preview.databaseRealpath) {
+        console.error(`Canonical database realpath: ${preview.databaseRealpath}`);
+      }
       if (preview.errors.length) process.exit(1);
       if (action === 'bind' || action === 'revoke') {
-        console.error('Dry-run only. Re-run with --confirm-write to apply.');
+        console.error('Dry-run only. Re-run with --confirm-write --confirm-database-realpath <realpath> --audit-log <path>.');
       }
       return;
+    }
+
+    if (!confirmRealpath?.trim()) {
+      console.error('Writes require --confirm-database-realpath matching the printed realpath.');
+      process.exit(2);
+    }
+    if (!auditLog?.trim()) {
+      console.error('Writes require --audit-log <path> (append-only JSONL).');
+      process.exit(2);
+    }
+
+    let auditPath: string;
+    try {
+      auditPath = preflightProdGuildBindAuditLog(auditLog);
+    } catch (err) {
+      console.error(`Audit preflight failed (no DB mutation): ${err instanceof Error ? err.message : err}`);
+      process.exit(2);
     }
 
     const result = await applyProdGuildBinding(prisma as any, {
@@ -83,11 +120,20 @@ async function main(): Promise<void> {
       serverConfigId: argValue(argv, '--server-config-id') ? Number(argValue(argv, '--server-config-id')) : undefined,
       musicBotId: argValue(argv, '--music-bot-id') ? Number(argValue(argv, '--music-bot-id')) : undefined,
       confirmWrite: true,
+      confirmRealpath,
     });
     console.log(JSON.stringify(result, null, 2));
-    if (auditLog) {
-      appendFileSync(auditLog, `${JSON.stringify(result.audit)}\n`, { mode: 0o600 });
-      console.log(`audit appended to ${auditLog}`);
+
+    try {
+      appendProdGuildBindAudit(auditPath, result.audit);
+      console.log(`audit appended to ${auditPath}`);
+    } catch (err) {
+      // DB mutation already committed — fail loud so operators do not miss it.
+      console.error('AUDIT_APPEND_FAILED after successful DB mutation.');
+      console.error(err instanceof Error ? err.message : err);
+      console.error('Printed audit record above; reconcile manually (revoke if needed).');
+      console.error(JSON.stringify(result.audit));
+      process.exit(1);
     }
   } finally {
     await prisma.$disconnect();

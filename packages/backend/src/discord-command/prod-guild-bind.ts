@@ -1,6 +1,12 @@
 /**
  * Production guild-binding preview/bind/revoke.
  * Uses explicit prod DB allowlist — never isolated --allow-any-database.
+ *
+ * Trust model: `--operator` / operator string is self-declared attribution for
+ * the audit trail. It does not authenticate. Authorisation is whoever can run
+ * this CLI with filesystem write access to the confirmed database realpath
+ * (container volume mount / host permissions). Prefer running only as the
+ * service admin that already owns the data volume.
  */
 import {
   assertDiscordGuildId,
@@ -22,17 +28,6 @@ function assertSnowflake(label: string, value: string): string {
   return v;
 }
 
-function requireProdDb(databaseUrl: string): void {
-  const assessment = assessProdGuildBindDatabaseUrl(databaseUrl);
-  if (!assessment.ok) {
-    throw new Error(
-      `Refusing write: ${assessment.errors[0] ?? 'unsafe DATABASE_URL'} `
-      + `(resolved=${assessment.resolvedPath ?? 'n/a'}). `
-      + 'Production guild-bind only allows basename ts6webui.db; there is no --allow-any-database bypass.',
-    );
-  }
-}
-
 export type ProdBindingPreview = {
   dryRun: true;
   action: 'bind' | 'revoke' | 'status';
@@ -41,6 +36,7 @@ export type ProdBindingPreview = {
   guildId: string;
   databaseTarget: string;
   databaseUrlSafe: boolean;
+  databaseRealpath: string | null;
   instanceId?: string;
   serverConfigId?: number;
   musicBotId?: number;
@@ -57,6 +53,7 @@ export type ProdBindingWriteResult = {
   operator: string;
   applicationId: string;
   guildId: string;
+  databaseRealpath: string;
   row: DiscordGuildBindingRow;
   audit: Record<string, unknown>;
 };
@@ -80,6 +77,8 @@ export async function previewProdGuildBinding(
     instanceId?: string;
     serverConfigId?: number;
     musicBotId?: number;
+    /** Optional; when set, preview also validates the confirm path. */
+    confirmRealpath?: string;
   },
 ): Promise<ProdBindingPreview> {
   const guildId = assertDiscordGuildId(opts.guildId);
@@ -88,7 +87,10 @@ export async function previewProdGuildBinding(
   const errors: string[] = [];
   if (!operator) errors.push('operator identity is required');
 
-  const dbTarget = assessProdGuildBindDatabaseUrl(opts.databaseUrl);
+  const dbTarget = assessProdGuildBindDatabaseUrl(opts.databaseUrl, {
+    requireExisting: true,
+    confirmRealpath: opts.confirmRealpath,
+  });
   const databaseUrlSafe = dbTarget.ok;
   if (!databaseUrlSafe) {
     errors.push(`unsafe DATABASE_URL: ${dbTarget.errors[0] ?? 'invalid target'}`);
@@ -134,6 +136,7 @@ export async function previewProdGuildBinding(
     guildId,
     databaseTarget: formatProdDbTarget(dbTarget),
     databaseUrlSafe,
+    databaseRealpath: dbTarget.realPath,
     instanceId: opts.instanceId,
     serverConfigId: opts.serverConfigId,
     musicBotId: opts.musicBotId,
@@ -157,13 +160,34 @@ export async function applyProdGuildBinding(
     serverConfigId?: number;
     musicBotId?: number;
     confirmWrite: true;
+    /** Exact fs.realpath of the intended database (required for writes). */
+    confirmRealpath: string;
   },
 ): Promise<ProdBindingWriteResult> {
   if (opts.confirmWrite !== true) {
     throw new Error('applyProdGuildBinding requires confirmWrite: true');
   }
-  requireProdDb(opts.databaseUrl);
-  const preview = await previewProdGuildBinding(prisma, opts);
+  if (!opts.confirmRealpath?.trim()) {
+    throw new Error('applyProdGuildBinding requires confirmRealpath (canonical database path)');
+  }
+
+  const writeTarget = assessProdGuildBindDatabaseUrl(opts.databaseUrl, {
+    requireExisting: true,
+    confirmRealpath: opts.confirmRealpath,
+  });
+  if (!writeTarget.ok || !writeTarget.realPath) {
+    throw new Error(
+      `Refusing write: ${writeTarget.errors[0] ?? 'unsafe DATABASE_URL'} `
+      + `(resolved=${writeTarget.resolvedPath ?? 'n/a'}). `
+      + 'Production guild-bind requires existing ts6webui.db + matching --confirm-database-realpath; '
+      + 'there is no --allow-any-database bypass.',
+    );
+  }
+
+  const preview = await previewProdGuildBinding(prisma, {
+    ...opts,
+    confirmRealpath: opts.confirmRealpath,
+  });
   if (preview.errors.length) {
     throw new Error(`Refusing write: ${preview.errors.join('; ')}`);
   }
@@ -191,6 +215,7 @@ export async function applyProdGuildBinding(
     serverConfigId: row.serverConfigId,
     instanceId: row.instanceId,
     revoked: row.revoked,
+    databaseRealpath: writeTarget.realPath,
   };
 
   return {
@@ -199,6 +224,7 @@ export async function applyProdGuildBinding(
     operator: preview.operator,
     applicationId: preview.applicationId,
     guildId: preview.guildId,
+    databaseRealpath: writeTarget.realPath,
     row,
     audit,
   };

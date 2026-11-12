@@ -102,18 +102,40 @@ node --import tsx src/discord-command/slash-register-cli.ts \
 ```
 
 5. Compare create/update/unchanged/collisions. Resolve collisions before any apply.
-6. Guild bind with the **production** CLI (allowlisted `ts6webui.db` only; preview then `--confirm-write`):
+6. Guild bind with the **production** CLI only:
 
 ```bash
+# Preview prints the canonical realpath. --operator is attribution, not auth.
 node --import tsx src/discord-command/prod-guild-bind-cli.ts preview-bind \
-  --database-url "file:./data/ts6webui.db" \
+  --database-url "file:/absolute/path/to/data/ts6webui.db" \
   --operator "$OPERATOR_ID" \
   --application-id "$DISCORD_APPLICATION_ID" \
   --guild-id "$GUILD_ID" \
   --instance-id "$INSTANCE_ID" \
   --server-config-id "$SERVER_ID" \
   --music-bot-id "$BOT_ID"
+
+# Write: existing ts6webui.db + exact realpath confirm + audit log (preflighted).
+node --import tsx src/discord-command/prod-guild-bind-cli.ts bind \
+  --database-url "file:/absolute/path/to/data/ts6webui.db" \
+  --confirm-database-realpath "/absolute/path/to/data/ts6webui.db" \
+  --audit-log "/absolute/path/to/guild-bind-audit.jsonl" \
+  --operator "$OPERATOR_ID" \
+  --application-id "$DISCORD_APPLICATION_ID" \
+  --guild-id "$GUILD_ID" \
+  --instance-id "$INSTANCE_ID" \
+  --server-config-id "$SERVER_ID" \
+  --music-bot-id "$BOT_ID" \
+  --confirm-write
 ```
+
+### Production guild-bind trust model
+
+- `--operator` is **self-declared attribution** for the audit trail. It does not authenticate the caller.
+- Authorisation is **OS/container filesystem permission** to read/write the confirmed database realpath (and to append the audit log). Only identities that already administer the TS6 data volume should be able to run this CLI against production.
+- Basename `ts6webui.db` alone is insufficient: the file must **already exist** as a regular file, and writes require `--confirm-database-realpath` equal to `fs.realpathSync` of that file (blocks same-basename accidents in another directory / symlink tricks to a non-allowlisted realpath).
+- `--audit-log` is required for writes. The CLI preflights appendability **before** the DB mutation. If the post-mutation audit append fails, the CLI exits non-zero, prints `AUDIT_APPEND_FAILED`, and reprints the audit record for manual reconciliation (revoke if needed). The DB change is not silently rolled back.
+- There is no `--allow-any-database` on this path.
 
 7. Enable interactions only with an explicit operator change to env + restart. Disable by clearing `DISCORD_INTERACTIONS_ENABLED` (or setting it false) and restarting.
 
