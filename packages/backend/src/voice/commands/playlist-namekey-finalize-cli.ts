@@ -12,9 +12,15 @@
  * Container start uses the compiled dist entry via apply-schema.sh.
  * --preflight / --preview are read-only and safe on legacy DBs without nameKey.
  * Never renames, merges, or deletes playlists. Conflicts refuse finalisation.
+ *
+ * Preflight inspects the database selected by DATABASE_URL (Prisma path rules).
+ * An absent file is treated as a fresh install unless DB_FILE / TS6_SCHEMA_DB_FILE
+ * points at a different existing database (fail closed).
  */
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import {
+  classifySqlitePreflightTarget,
   finalizePlaylistNameKeyMigration,
   formatPlaylistNameKeyCompatibilityReport,
   preflightPlaylistNameKeyCompatibility,
@@ -22,6 +28,7 @@ import {
 } from './playlist-name.js';
 
 const require = createRequire(import.meta.url);
+const schemaDir = fileURLToPath(new URL('../../../prisma', import.meta.url));
 
 async function openPrisma() {
   const { PrismaClient } = require('../../../generated/prisma/index.js') as typeof import('../../../generated/prisma/index.js');
@@ -54,6 +61,10 @@ function printAssessment(
   console.log(result.report);
 }
 
+function markerDbFile(): string | null {
+  return (process.env.TS6_SCHEMA_DB_FILE || process.env.DB_FILE || '').trim() || null;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const preview = argv.includes('--preview');
@@ -65,10 +76,37 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  if (!process.env.DATABASE_URL?.trim()) {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
     console.error('DATABASE_URL is required');
     process.exit(2);
   }
+
+  const target = classifySqlitePreflightTarget({
+    databaseUrl,
+    schemaDir,
+    markerDbFile: markerDbFile(),
+  });
+  if (target.kind === 'error') {
+    console.error(`[nameKey] ${target.message}`);
+    process.exit(1);
+  }
+  if (target.kind === 'absent_fresh') {
+    if (confirm) {
+      console.error(`[nameKey] refusing finalisation; database file is missing: ${target.absolutePath}`);
+      process.exit(1);
+    }
+    console.log(`[nameKey] ${preview ? 'preview' : 'preflight'}`);
+    console.log(`database=${target.absolutePath}`);
+    console.log('playlists=0');
+    console.log('conflicts=0');
+    console.log('emptyNormalized=0');
+    console.log('compatible=true');
+    console.log(`Absent database at ${target.absolutePath} — treating as fresh install (no schema change yet).`);
+    process.exit(0);
+  }
+
+  console.log(`[nameKey] database=${target.absolutePath}`);
 
   const { prisma, disconnect } = await openPrisma();
   try {

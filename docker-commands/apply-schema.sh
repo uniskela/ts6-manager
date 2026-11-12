@@ -53,10 +53,14 @@ if [ ! -f "$PRISMA_CLI" ]; then
   exit 1
 fi
 
-# Ensure Prisma/CLI share the same SQLite file apply-schema is inspecting.
+# Prisma and the nameKey CLI use DATABASE_URL (not DB_FILE) as the database.
+# Default DATABASE_URL to DB_FILE only when unset so both stay aligned for stock
+# installs; a custom DATABASE_URL is always what preflight and db push open.
 if [ -z "${DATABASE_URL:-}" ]; then
   export DATABASE_URL="file:$DB_FILE"
 fi
+# Hint for preflight mismatch detection when DATABASE_URL ≠ DB_FILE.
+export TS6_SCHEMA_DB_FILE="$DB_FILE"
 
 NAMEKEY_CLI=""
 if [ -f "$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js" ]; then
@@ -78,16 +82,15 @@ run_namekey_cli() {
   fi
 }
 
-# F1: refuse incompatible legacy playlist names BEFORE prisma db push mutates
-# the schema. Read-only preflight; a failure leaves the original database and
-# schema unchanged so the previous image can still start.
-if [ "$DB_EXISTS" -eq 1 ]; then
-  echo "[schema] Preflight: playlist nameKey compatibility (read-only, before db push)"
-  if ! run_namekey_cli --preflight; then
-    echo "[schema] Playlist name compatibility preflight failed — database left unchanged." >&2
-    echo "[schema] Resolve duplicate/blank playlist names on a copy, or restore backup and stay on the previous image." >&2
-    exit 1
-  fi
+# F1: always preflight the DATABASE_URL target BEFORE prisma db push.
+# Absent DB → fresh install (CLI exits 0 without creating the file).
+# Existing incompatible playlists → refuse; schema and rows stay unchanged.
+# DB_FILE existence must not gate this — DATABASE_URL can point elsewhere.
+echo "[schema] Preflight: playlist nameKey compatibility (read-only, before db push)"
+if ! run_namekey_cli --preflight; then
+  echo "[schema] Playlist name compatibility preflight failed — database left unchanged." >&2
+  echo "[schema] Resolve duplicate/blank playlist names on a copy, or restore backup and stay on the previous image." >&2
+  exit 1
 fi
 
 echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"

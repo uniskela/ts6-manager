@@ -206,23 +206,48 @@ For an existing persistent database the startup path:
 
 `prisma db push` alone cannot install the playlist uniqueness rules (they are partial SQLite indexes and cross-namespace triggers). Preflight and finalisation never rename, merge, or delete playlists.
 
-### Preview playlist name compatibility (published images)
+### Preview / preflight playlist name compatibility (published images)
 
-Published backend images ship the compiled CLI (no TypeScript/`tsx` required). With the backend container running, or against a **copy** of `ts6webui.db`:
+Published images ship the compiled CLI (no TypeScript/`tsx` required). Prefer `--preflight` (or `--preview`) against a **copy** of the database before upgrading. Exit code `0` means compatible; non-zero prints a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) with playlist ids and names.
 
-```bash
-docker compose exec backend \
-  node dist/voice/commands/playlist-namekey-finalize-cli.js --preview
-```
+`docker compose exec` only works while the backend is running. After a refused upgrade the backend often crash-loops, so use a **one-off** `compose run` that does not start sidecar/frontend:
 
-All-in-one image (service name may differ):
+**Split stack** (`docker-compose.yml` service `backend`; working directory `/app/packages/backend`):
 
 ```bash
-docker compose -f docker-compose.all-in-one.yml exec backend \
-  node dist/voice/commands/playlist-namekey-finalize-cli.js --preview
+docker compose run --rm --no-deps --entrypoint node backend \
+  dist/voice/commands/playlist-namekey-finalize-cli.js --preflight
 ```
 
-Exit code `0` means compatible; non-zero prints a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) with playlist ids and names. Prefer running preview on a **copied** database before upgrading.
+**All-in-one** (`docker-compose.all-in-one.yml` service `ts6`; working directory `/app`):
+
+```bash
+docker compose -f docker-compose.all-in-one.yml \
+  run --rm --no-deps --entrypoint node ts6 \
+  /app/packages/backend/dist/voice/commands/playlist-namekey-finalize-cli.js \
+  --preflight
+```
+
+Both commands inherit the compose `DATABASE_URL` and data volume. They do not rewrite playlists.
+
+#### Preflight against a copy (recommended)
+
+1. **Stop** the backend (or all-in-one) so SQLite is quiescent.
+2. Copy `ts6webui.db` **and** any `ts6webui.db-wal` / `ts6webui.db-shm` beside it into a disposable directory on the host (for example `./db-check/`).
+3. Run a one-off container that mounts **only** that directory read-only and points `DATABASE_URL` at the copy. Do not mount the live data volume for write access.
+
+Split stack example (adjust the host path):
+
+```bash
+docker compose run --rm --no-deps --no-TTY \
+  --entrypoint node \
+  -e DATABASE_URL=file:/check/ts6webui.db \
+  -v "$PWD/db-check:/check:ro" \
+  backend \
+  dist/voice/commands/playlist-namekey-finalize-cli.js --preflight
+```
+
+Confirm the log line `database=/check/ts6webui.db` (or your copy path) so the CLI read the intended file. The production volume is not mounted for writes.
 
 ### Backup, restore, and rollback (schema)
 
@@ -233,9 +258,21 @@ Distinguish these outcomes:
 
 | Situation | Database state | What to do |
 |-----------|----------------|------------|
-| **Failed preflight** (before `db push`) | Original schema and rows unchanged | Previous image tag can start against this database. Fix duplicate/blank names on a **copy**, then upgrade again; or stay on the previous image. |
+| **Failed preflight** (before `db push`) | Original schema and rows unchanged | Previous image tag can start against this database. Use the recovery steps below, or stay on the previous image. |
 | **Successful schema upgrade** (push + finalise recorded) | Newer columns/constraints present | Rollback needs the **previous image tag and the matching database backup**. Do not point an older image at the upgraded database and expect a clean start. |
-| **Partial upgrade** (older image already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run the new image so finalisation can complete. |
+| **Partial upgrade** (an earlier build of this release — for example PR head `3f71dedb` — already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | v1.11.x does **not** create the `nameKey` schema. Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run a fixed new image so finalisation can complete. |
+
+#### Recovery after a refused preflight (database unchanged)
+
+This procedure applies **only** when preflight refused **before** schema changes (logs show preflight failure and no successful `prisma db push` for this upgrade):
+
+1. Confirm the live database was not modified (no new `nameKey` column / schema-version marker for this release).
+2. Start the **previous working image** (for example the last v1.11.x tag) against that same database.
+3. In the normal Web UI, rename conflicting playlists so each scope has a unique name after trim + case folding (and fix blank / whitespace-only names).
+4. Stop the backend and **back up** the corrected database (`ts6webui.db` plus `-wal`/`-shm`).
+5. Retry the upgrade with the new image.
+
+If the schema was **already** mutated (partial upgrade from an earlier new-release build, or a successful push), do **not** use steps 2–3 against the mutated file as a substitute for backup restore — restore the matching pre-upgrade backup, or complete migration carefully on a copy.
 
 Image-only rollback after a successful schema migration is **not** supported.
 

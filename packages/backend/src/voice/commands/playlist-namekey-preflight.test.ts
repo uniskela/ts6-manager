@@ -14,17 +14,20 @@ import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
 import {
   allocateUniquePlaylistDisplayName,
+  classifySqlitePreflightTarget,
   finalizePlaylistNameKeyMigration,
   normalizePlaylistNameKey,
   playlistNameKeyConstraintsReady,
   preflightPlaylistNameKeyCompatibility,
   previewPlaylistNameKeyMigration,
+  resolvePrismaSqliteDatabasePath,
 } from './playlist-name.js';
 
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require('../../../generated/prisma/index.js') as typeof import('../../../generated/prisma/index.js');
 const prismaCli = fileURLToPath(new URL('../../../node_modules/prisma/build/index.js', import.meta.url));
 const schemaPath = fileURLToPath(new URL('../../../prisma/schema.prisma', import.meta.url));
+const schemaDir = fileURLToPath(new URL('../../../prisma', import.meta.url));
 const applySchemaSh = fileURLToPath(new URL('../../../../../docker-commands/apply-schema.sh', import.meta.url));
 const backendDir = fileURLToPath(new URL('../../..', import.meta.url));
 const cliTs = fileURLToPath(new URL('./playlist-namekey-finalize-cli.ts', import.meta.url));
@@ -85,8 +88,11 @@ async function buildLegacyFixture(
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    await prisma.$executeRawUnsafe(`DROP TABLE "Playlist"`);
+    // Disable FKs so DROP is not blocked by PlaylistSong / other refs during rebuild.
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=OFF`);
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "Playlist"`);
     await prisma.$executeRawUnsafe(`ALTER TABLE "Playlist_pre_namekey" RENAME TO "Playlist"`);
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=ON`);
 
     await prisma.tsServerConfig.create({
       data: { id: 1, name: 'Alpha', host: 'alpha.test', apiKey: 'k1' },
@@ -122,21 +128,29 @@ async function buildLegacyFixture(
   }
 }
 
-function runApplySchema(dataDir: string, dbFile: string): { status: number | null; stdout: string; stderr: string } {
+function runApplySchema(
+  dataDir: string,
+  dbFile: string,
+  opts: { databaseUrl?: string } = {},
+): { status: number | null; stdout: string; stderr: string } {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BACKEND_DIR: backendDir,
     DATA_DIR: dataDir,
     DB_FILE: dbFile,
-    DATABASE_URL: `file:${dbFile}`,
+    DATABASE_URL: opts.databaseUrl ?? `file:${dbFile}`,
     CHECKPOINT_DISABLE: '1',
   };
   const result = spawnSync('sh', [applySchemaSh], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
-function runCli(flag: '--preview' | '--preflight' | '--confirm-finalize', dbFile: string) {
-  const env = { ...process.env, DATABASE_URL: `file:${dbFile}` };
+function runCli(
+  flag: '--preview' | '--preflight' | '--confirm-finalize',
+  databaseUrl: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+) {
+  const env = { ...process.env, DATABASE_URL: databaseUrl, ...extraEnv };
   // Prefer compiled CLI when present (published-image path); else tsx source.
   try {
     accessSync(cliJs);
@@ -314,7 +328,7 @@ describe('F1 playlist nameKey preflight (legacy fixtures)', () => {
       } finally {
         await prisma.$disconnect();
       }
-      const cli = runCli('--preview', dbFile);
+      const cli = runCli('--preview', `file:${dbFile}`);
       assert.notEqual(cli.status, 0);
       assert.match(cli.stdout + cli.stderr, /empty_normalized|compatible=false/);
       const hashBefore = await sha256File(dbFile);
@@ -444,12 +458,170 @@ describe('F1 playlist nameKey preflight (legacy fixtures)', () => {
         { name: 'A', serverConfigId: 1 },
         { name: 'a', serverConfigId: 1 },
       ]);
-      const preview = runCli('--preview', dbFile);
-      const preflight = runCli('--preflight', dbFile);
+      const preview = runCli('--preview', `file:${dbFile}`);
+      const preflight = runCli('--preflight', `file:${dbFile}`);
       assert.notEqual(preview.status, 0);
       assert.notEqual(preflight.status, 0);
       assert.match(preview.stdout, /compatible=false/);
       assert.match(preflight.stdout, /compatible=false/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('F1 R1 DATABASE_URL preflight targeting', () => {
+  it('resolves relative file: URLs against the Prisma schema directory', () => {
+    const abs = resolvePrismaSqliteDatabasePath('file:./custom/legacy.db', schemaDir);
+    assert.equal(abs.ok, true);
+    if (abs.ok) {
+      assert.equal(abs.absolutePath, path.resolve(schemaDir, './custom/legacy.db'));
+    }
+    const plain = resolvePrismaSqliteDatabasePath('file:legacy.db', schemaDir);
+    assert.equal(plain.ok, true);
+    if (plain.ok) {
+      assert.equal(plain.absolutePath, path.resolve(schemaDir, 'legacy.db'));
+    }
+  });
+
+  it('absent DATABASE_URL is fresh; mismatched existing DB_FILE fails closed', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-mismatch-'));
+    const marker = path.join(root, 'marker.db');
+    const missing = path.join(root, 'missing-custom.db');
+    try {
+      await buildLegacyFixture(marker, [{ name: 'Solo', serverConfigId: 1 }]);
+      const fresh = classifySqlitePreflightTarget({
+        databaseUrl: `file:${missing}`,
+        schemaDir,
+      });
+      assert.equal(fresh.kind, 'absent_fresh');
+
+      const mismatch = classifySqlitePreflightTarget({
+        databaseUrl: `file:${missing}`,
+        schemaDir,
+        markerDbFile: marker,
+      });
+      assert.equal(mismatch.kind, 'error');
+      if (mismatch.kind === 'error') {
+        assert.match(mismatch.message, /refusing to initialise a replacement/i);
+      }
+
+      const cli = runCli('--preflight', `file:${missing}`, {
+        TS6_SCHEMA_DB_FILE: marker,
+        DB_FILE: marker,
+      });
+      assert.notEqual(cli.status, 0);
+      assert.match(cli.stderr + cli.stdout, /refusing to initialise a replacement/i);
+      assert.equal((await playlistColumns(marker)).includes('nameKey'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('legacy database at custom absolute DATABASE_URL upgrades when compatible', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-abs-url-'));
+    const dataDir = path.join(root, 'data');
+    const markerUnused = path.join(dataDir, 'ts6webui.db');
+    const customDb = path.join(root, 'custom', 'app.db');
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(path.dirname(customDb), { recursive: true });
+    try {
+      await buildLegacyFixture(customDb, [
+        { name: 'Morning', serverConfigId: 1 },
+        { name: 'Night', serverConfigId: 2 },
+      ]);
+      // DB_FILE path does not exist — must still preflight DATABASE_URL.
+      const applied = runApplySchema(dataDir, markerUnused, { databaseUrl: `file:${customDb}` });
+      assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+      assert.match(applied.stdout, /Preflight: playlist nameKey compatibility/);
+      assert.equal((await playlistColumns(customDb)).includes('nameKey'), true);
+      assert.equal((await playlistColumns(customDb)).includes('nameKey'), true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('legacy database at relative DATABASE_URL (schema-dir semantics) is checked', async () => {
+    const relDir = path.join(schemaDir, 'f1-rel-fixture');
+    const relDb = path.join(relDir, 'legacy.db');
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-rel-'));
+    const dataDir = path.join(root, 'data');
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(relDir, { recursive: true });
+    try {
+      await buildLegacyFixture(relDb, [{ name: 'RelOk', serverConfigId: 1 }]);
+      const resolved = resolvePrismaSqliteDatabasePath('file:./f1-rel-fixture/legacy.db', schemaDir);
+      assert.equal(resolved.ok, true);
+      if (resolved.ok) assert.equal(resolved.absolutePath, relDb);
+
+      const applied = runApplySchema(dataDir, path.join(dataDir, 'ts6webui.db'), {
+        databaseUrl: 'file:./f1-rel-fixture/legacy.db',
+      });
+      assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+      assert.equal((await playlistColumns(relDb)).includes('nameKey'), true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(relDir, { recursive: true, force: true });
+    }
+  });
+
+  it('DATABASE_URL and DB_FILE differing: preflight uses DATABASE_URL and refuses duplicates before mutation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-split-paths-'));
+    const dataDir = path.join(root, 'data');
+    const marker = path.join(dataDir, 'ts6webui.db');
+    const customDb = path.join(root, 'elsewhere', 'live.db');
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(path.dirname(customDb), { recursive: true });
+    try {
+      // Marker path empty / absent; real legacy data only at custom DATABASE_URL.
+      await buildLegacyFixture(customDb, [
+        { name: 'Chill', serverConfigId: 1 },
+        { name: 'chill', serverConfigId: 1 },
+      ]);
+      const hashBefore = await sha256File(customDb);
+      const colsBefore = await playlistColumns(customDb);
+      const applied = runApplySchema(dataDir, marker, { databaseUrl: `file:${customDb}` });
+      assert.notEqual(applied.status, 0);
+      assert.match(applied.stdout + applied.stderr, /Preflight|compatible=false|same_scope/i);
+      assert.equal(await sha256File(customDb), hashBefore);
+      assert.deepEqual(await playlistColumns(customDb), colsBefore);
+      assert.equal(colsBefore.includes('nameKey'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('whitespace-only names on custom-path DB refuse before schema mutation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-ws-custom-'));
+    const dataDir = path.join(root, 'data');
+    const marker = path.join(dataDir, 'ts6webui.db');
+    const customDb = path.join(root, 'ws.db');
+    await mkdir(dataDir, { recursive: true });
+    try {
+      await buildLegacyFixture(customDb, [
+        { name: '   ', serverConfigId: 1 },
+        { name: 'Ok', serverConfigId: 1 },
+      ]);
+      const hashBefore = await sha256File(customDb);
+      assert.notEqual(runApplySchema(dataDir, marker, { databaseUrl: `file:${customDb}` }).status, 0);
+      assert.equal(await sha256File(customDb), hashBefore);
+      assert.equal((await playlistColumns(customDb)).includes('nameKey'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fresh install with no database still initialises after unconditional preflight', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-fresh2-'));
+    const dataDir = path.join(root, 'data');
+    await mkdir(dataDir, { recursive: true });
+    const dbFile = path.join(dataDir, 'ts6webui.db');
+    try {
+      const pre = runCli('--preflight', `file:${dbFile}`, { TS6_SCHEMA_DB_FILE: dbFile });
+      assert.equal(pre.status, 0, pre.stderr || pre.stdout);
+      assert.match(pre.stdout, /fresh install|compatible=true/i);
+      const applied = runApplySchema(dataDir, dbFile);
+      assert.equal(applied.status, 0, applied.stderr || applied.stdout);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

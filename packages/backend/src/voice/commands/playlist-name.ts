@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { AppError } from '../../middleware/error-handler.js';
 
 /**
@@ -12,6 +14,114 @@ import { AppError } from '../../middleware/error-handler.js';
  */
 export function normalizePlaylistNameKey(name: string): string {
   return name.trim().toLowerCase();
+}
+
+/**
+ * Resolve a Prisma SQLite `DATABASE_URL` to an absolute filesystem path.
+ * Relative `file:` paths are resolved against the Prisma schema directory
+ * (Prisma's semantics), not `process.cwd()`.
+ */
+export function resolvePrismaSqliteDatabasePath(
+  databaseUrl: string,
+  schemaDir: string,
+): { ok: true; absolutePath: string } | { ok: false; error: string } {
+  const raw = databaseUrl.trim();
+  if (!raw) return { ok: false, error: 'DATABASE_URL is empty' };
+  if (!/^file:/i.test(raw)) {
+    return { ok: false, error: 'DATABASE_URL must be a file: SQLite URL' };
+  }
+  let pathPart = raw.replace(/^file:/i, '');
+  const queryIdx = pathPart.indexOf('?');
+  if (queryIdx >= 0) pathPart = pathPart.slice(0, queryIdx);
+  try {
+    pathPart = decodeURIComponent(pathPart);
+  } catch {
+    return { ok: false, error: 'DATABASE_URL path could not be decoded' };
+  }
+  // file:///abs → /abs ; file://localhost/abs → /abs ; file:/abs → /abs
+  if (pathPart.startsWith('///')) {
+    pathPart = pathPart.slice(2);
+  } else if (pathPart.startsWith('//')) {
+    pathPart = pathPart.replace(/^\/\/[^/]*/, '') || pathPart;
+  }
+  if (!pathPart) return { ok: false, error: 'DATABASE_URL has empty path' };
+
+  const absolutePath = path.isAbsolute(pathPart)
+    ? path.normalize(pathPart)
+    : path.resolve(schemaDir, pathPart);
+  return { ok: true, absolutePath };
+}
+
+export type SqlitePreflightTarget =
+  | { kind: 'absent_fresh'; absolutePath: string }
+  | { kind: 'present'; absolutePath: string }
+  | { kind: 'error'; message: string };
+
+/**
+ * Decide whether preflight should open the DATABASE_URL target, treat it as a
+ * fresh/absent install, or fail closed. Never creates the SQLite file.
+ *
+ * When `markerDbFile` (apply-schema `DB_FILE`) exists at a different path than a
+ * missing DATABASE_URL target, refuse — opening Prisma would initialise an empty
+ * replacement DB and conceal the operator configuration error.
+ */
+export function classifySqlitePreflightTarget(opts: {
+  databaseUrl: string;
+  schemaDir: string;
+  markerDbFile?: string | null;
+}): SqlitePreflightTarget {
+  const resolved = resolvePrismaSqliteDatabasePath(opts.databaseUrl, opts.schemaDir);
+  if (!resolved.ok) return { kind: 'error', message: resolved.error };
+  const { absolutePath } = resolved;
+
+  try {
+    fs.accessSync(absolutePath, fs.constants.R_OK);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      return {
+        kind: 'error',
+        message: `DATABASE_URL database is not readable: ${absolutePath}${code ? ` (${code})` : ''}`,
+      };
+    }
+    const marker = opts.markerDbFile?.trim();
+    if (marker) {
+      try {
+        fs.accessSync(marker, fs.constants.R_OK);
+        const markerReal = fs.realpathSync(marker);
+        if (path.resolve(markerReal) !== path.resolve(absolutePath)) {
+          return {
+            kind: 'error',
+            message:
+              `DATABASE_URL targets missing ${path.resolve(absolutePath)} but DB_FILE exists at ${markerReal}; ` +
+              'refusing to initialise a replacement database',
+          };
+        }
+      } catch (markerErr) {
+        const markerCode = (markerErr as NodeJS.ErrnoException)?.code;
+        if (markerCode !== 'ENOENT') {
+          return {
+            kind: 'error',
+            message: `DB_FILE is not readable: ${marker}${markerCode ? ` (${markerCode})` : ''}`,
+          };
+        }
+      }
+    }
+    return { kind: 'absent_fresh', absolutePath };
+  }
+
+  try {
+    if (!fs.statSync(absolutePath).isFile()) {
+      return { kind: 'error', message: `DATABASE_URL path is not a file: ${absolutePath}` };
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    return {
+      kind: 'error',
+      message: `DATABASE_URL database could not be inspected: ${absolutePath}${code ? ` (${code})` : ''}`,
+    };
+  }
+  return { kind: 'present', absolutePath };
 }
 
 export function normalizePlaylistDisplayName(name: string): string {
