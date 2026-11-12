@@ -8,6 +8,14 @@ import { radioFfmpegArgs } from './ffmpeg-args.mjs';
 import { landlockDisabledByEnv, parseCheckOutput } from './landlock.mjs';
 import { peerPid } from './peer-pid.mjs';
 import { allocateJobId, allowTlsConnect, constrainRadioPorts, parseJobId } from './policy.mjs';
+import {
+  abandonPending,
+  clearUnregisteredJobId,
+  continueIfClientAlive,
+  createPendingJob,
+  noteProxyRegistered,
+} from './pending-job.mjs';
+import { attachClientSocketLifecycle } from './socket-guards.mjs';
 import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const sockPath = process.env.JOBS_SOCK || '/jobs/jobs.sock';
@@ -191,6 +199,26 @@ async function finish(job) {
 
 async function handle(socket) {
   let buf = Buffer.alloc(0);
+  /** @type {{ id: string, child: import('node:child_process').ChildProcess, shim: object, timer: NodeJS.Timeout, done?: boolean } | null} */
+  let job = null;
+  const pending = createPendingJob();
+  const pendingHelpers = {
+    killTree,
+    async revokeJob(id) {
+      try { await ctl('POST', `/jobs/${id}/revoke`); } catch { /* proxy down */ }
+      try { await ctl('DELETE', `/jobs/${id}`); } catch { /* proxy down */ }
+    },
+  };
+  // Attach before any await/write: backend /stop destroys the peer and emits
+  // ECONNRESET; without a listener Node throws and kills the fetcher.
+  const life = attachClientSocketLifecycle(socket, {
+    onTeardown: () => {
+      void (async () => {
+        await abandonPending(pending, pendingHelpers);
+        await finish(job);
+      })().catch(() => {});
+    },
+  });
   socket.on('data', async (chunk) => {
     if (buf === null) return;
     buf = Buffer.concat([buf, chunk]);
@@ -222,15 +250,16 @@ async function handle(socket) {
         socket.end(JSON.stringify({ ok: false, error: 'bad-job-id' }) + '\n');
         return;
       }
-      const job = jobs.get(jobId);
-      await finish(job);
-      socket.end(JSON.stringify({ ok: true, cancelled: jobId, existed: Boolean(job) }) + '\n');
+      const existing = jobs.get(jobId);
+      await finish(existing);
+      socket.end(JSON.stringify({ ok: true, cancelled: jobId, existed: Boolean(existing) }) + '\n');
       return;
     }
     if (msg.op !== 'submit') {
       socket.end(JSON.stringify({ ok: false, error: 'bad op' }) + '\n');
       return;
     }
+    if (life.done) return;
     if (jobs.size >= maxJobs) {
       socket.end(JSON.stringify({ ok: false, error: 'busy' }) + '\n');
       return;
@@ -245,6 +274,7 @@ async function handle(socket) {
       return;
     }
     const jobId = allocated.jobId;
+    pending.jobId = jobId;
     const jobToken = randomBytes(16).toString('hex');
     const ports = constrainRadioPorts(msg.ports);
     if (!ports) {
@@ -257,33 +287,66 @@ async function handle(socket) {
         id: jobId, token: jobToken, hosts, ports, connect: allowTlsConnect(msg.url),
       });
       if (reg.status === 409) {
-        socket.end(JSON.stringify({ ok: false, error: 'duplicate-job' }) + '\n');
+        clearUnregisteredJobId(pending);
+        if (!life.done) {
+          socket.end(JSON.stringify({ ok: false, error: 'duplicate-job' }) + '\n');
+        }
         return;
       }
       if (reg.status !== 201) throw new Error('proxy register');
+      // Late 201 after disconnect must still revoke (jobId retained through abandon).
+      if (!(await noteProxyRegistered(pending, pendingHelpers))) return;
     } catch {
-      socket.end(JSON.stringify({ ok: false, error: 'proxy-unavailable' }) + '\n');
+      clearUnregisteredJobId(pending);
+      if (!life.done) {
+        socket.end(JSON.stringify({ ok: false, error: 'proxy-unavailable' }) + '\n');
+      }
       return;
     }
+    if (!(await continueIfClientAlive(life, pending, pendingHelpers))) return;
+
     let shim;
     let child;
     try {
       shim = await startShim(jobToken);
+      pending.shim = shim;
+      if (!(await continueIfClientAlive(life, pending, pendingHelpers))) return;
       ({ child } = startFfmpeg(msg.url, shim.port));
+      pending.child = child;
     } catch {
-      try { await ctl('DELETE', `/jobs/${jobId}`); } catch { /* proxy down */ }
-      socket.end(JSON.stringify({ ok: false, error: 'fetcher-unavailable' }) + '\n');
+      await abandonPending(pending, pendingHelpers);
+      if (!life.done) {
+        socket.end(JSON.stringify({ ok: false, error: 'fetcher-unavailable' }) + '\n');
+      }
       return;
     }
+    if (!(await continueIfClientAlive(life, pending, pendingHelpers))) return;
+
     shim.allowPid(child.pid);
-    const job = {
+    job = {
       id: jobId,
       child,
       shim,
       timer: setTimeout(() => finish(job), jobTimeoutMs),
     };
     jobs.set(jobId, job);
-    socket.write(JSON.stringify({ ok: true, jobId, shimPort: shim.port }) + '\n');
+    // finish() owns cleanup from here; clear pending so teardown cannot double-kill.
+    pending.child = null;
+    pending.shim = null;
+    pending.proxyRegistered = false;
+    pending.jobId = null;
+    pending.abandoned = false;
+    if (life.done) {
+      await finish(job);
+      return;
+    }
+    try {
+      socket.write(JSON.stringify({ ok: true, jobId, shimPort: shim.port }) + '\n');
+    } catch { /* closed */ }
+    if (life.done) {
+      await finish(job);
+      return;
+    }
     // Pause ffmpeg stdout when the client socket is full so a fast VOD cannot
     // buffer unbounded audio in this process.
     child.stdout.on('data', (c) => {
@@ -305,7 +368,7 @@ async function handle(socket) {
       void finish(job).catch(() => {});
       void status;
     });
-    socket.on('close', () => { void finish(job).catch(() => {}); });
+    // socket close/error → abandonPending + finish via lifecycle (idempotent)
   });
 }
 
