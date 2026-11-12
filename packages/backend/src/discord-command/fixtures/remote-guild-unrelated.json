@@ -1,0 +1,17 @@
+[
+  {
+    "id": "sim-unrelated-1",
+    "name": "labvoice",
+    "type": 1,
+    "description": "SIMULATED remote-only command — not real Discord state",
+    "default_member_permissions": null
+  },
+  {
+    "id": "sim-ts-other",
+    "name": "ts",
+    "type": 1,
+    "description": "SIMULATED existing /ts with different description",
+    "default_member_permissions": null,
+    "options": []
+  }
+]

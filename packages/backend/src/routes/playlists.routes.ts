@@ -5,17 +5,25 @@ import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { actorFromRequest, recordLocalSuccess } from '../audit/index.js';
 import { buildRow } from '../audit/writer.js';
+import {
+  catalogScopeWhere,
+  effectivePlaylistMode,
+  normalizePlaylistMode,
+  playlistModeMismatchMessage,
+  songMatchesMode,
+} from '../voice/commands/library.js';
+import {
+  ensurePlaylistNameKeyConstraintsReady,
+  findPlaylistNameOccupant,
+  isPlaylistNameUniqueViolation,
+  normalizePlaylistDisplayName,
+  normalizePlaylistNameKey,
+  PlaylistNameConflictError,
+} from '../voice/commands/playlist-name.js';
 
 export const playlistRoutes: Router = Router();
 
 playlistRoutes.use(requireRole('admin'));
-
-type PlaylistMode = 'local' | 'stream';
-
-function normalizePlaylistMode(raw: unknown, fallback: PlaylistMode = 'local'): PlaylistMode {
-  if (raw === 'stream' || raw === 'local') return raw;
-  return fallback;
-}
 
 function normalizePlaylistRemoteAccess(raw: unknown, fallback: PlaylistRemoteAccess = 'hidden'): PlaylistRemoteAccess {
   if (raw === 'hidden' || raw === 'browse' || raw === 'request') return raw;
@@ -26,18 +34,6 @@ function normalizePlaylistRemoteAccess(raw: unknown, fallback: PlaylistRemoteAcc
 function parsePlaylistRemoteAccess(raw: unknown): PlaylistRemoteAccess {
   if (raw === 'hidden' || raw === 'browse' || raw === 'request') return raw;
   throw new AppError(400, 'remoteAccess must be hidden, browse, or request');
-}
-
-/** YouTube-imported playlists must stay stream-mode even if DB defaulted to local. */
-function effectivePlaylistMode(p: { mode: string; youtubePlaylistId?: string | null }): PlaylistMode {
-  if (p.youtubePlaylistId) return 'stream';
-  return normalizePlaylistMode(p.mode);
-}
-
-function songMatchesMode(source: string, mode: PlaylistMode): boolean {
-  if (mode === 'local') return source === 'local';
-  // stream playlists accept youtube + direct url tracks
-  return source === 'youtube' || source === 'url';
 }
 
 function mapPlaylistSummary(p: {
@@ -76,12 +72,7 @@ playlistRoutes.get('/', async (req: Request, res: Response, next) => {
     const playlists = await prisma.playlist.findMany({
       // Legacy playlists without an explicit server can still belong to a bot.
       // Match the same server eligibility enforced when choosing an Auto-DJ source.
-      where: serverConfigId ? {
-        AND: [
-          { OR: [{ serverConfigId }, { serverConfigId: null }] },
-          { OR: [{ musicBot: null }, { musicBot: { serverConfigId } }] },
-        ],
-      } : undefined,
+      where: serverConfigId ? catalogScopeWhere(serverConfigId) : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -139,7 +130,9 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const { name, musicBotId, mode, serverConfigId, remoteAccess } = req.body;
-    if (!name) throw new AppError(400, 'name is required');
+    if (name == null || String(name).trim() === '') throw new AppError(400, 'name is required');
+    const displayName = normalizePlaylistDisplayName(String(name));
+    const nameKey = normalizePlaylistNameKey(displayName);
     const playlistMode = normalizePlaylistMode(mode, 'local');
     const playlistRemoteAccess =
       remoteAccess === undefined ? undefined : parsePlaylistRemoteAccess(remoteAccess);
@@ -151,38 +144,48 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
     if (serverConfigId != null && !(await prisma.tsServerConfig.findUnique({ where: { id: serverConfigId }, select: { id: true } }))) {
       throw new AppError(400, `Server ${serverConfigId} does not exist`);
     }
+    await ensurePlaylistNameKeyConstraintsReady(prisma);
+    const scopeId = serverConfigId ?? null;
+    const occupant = await findPlaylistNameOccupant(prisma, nameKey, scopeId);
+    if (occupant) throw new PlaylistNameConflictError(displayName, occupant.id);
 
     const createData = {
-      name,
+      name: displayName,
+      nameKey,
       mode: playlistMode,
       musicBotId: musicBotId ? parseInt(musicBotId) : null,
-      serverConfigId: serverConfigId ?? null,
+      serverConfigId: scopeId,
       ...(playlistRemoteAccess !== undefined ? { remoteAccess: playlistRemoteAccess } : {}),
     };
 
-    const playlist =
-      playlistRemoteAccess !== undefined && playlistRemoteAccess !== 'hidden'
-        ? (
-            await recordLocalSuccess(
-              prisma,
-              {
-                actor: actorFromRequest(req.user),
-                action: 'playlist.remote_access_update',
-                connectionId: serverConfigId ?? null,
-                target: { type: 'playlist', id: 0 },
-              },
-              async (tx) => tx.playlist.create({ data: createData }),
-              { resolveTargetId: (created) => created.id },
-            )
-          ).result
-        : await prisma.playlist.create({ data: createData });
+    try {
+      const playlist =
+        playlistRemoteAccess !== undefined && playlistRemoteAccess !== 'hidden'
+          ? (
+              await recordLocalSuccess(
+                prisma,
+                {
+                  actor: actorFromRequest(req.user),
+                  action: 'playlist.remote_access_update',
+                  connectionId: serverConfigId ?? null,
+                  target: { type: 'playlist', id: 0 },
+                },
+                async (tx) => tx.playlist.create({ data: createData }),
+                { resolveTargetId: (created) => created.id },
+              )
+            ).result
+          : await prisma.playlist.create({ data: createData });
 
-    res.status(201).json({
-      id: playlist.id,
-      name: playlist.name,
-      mode: normalizePlaylistMode(playlist.mode),
-      remoteAccess: normalizePlaylistRemoteAccess(playlist.remoteAccess),
-    });
+      res.status(201).json({
+        id: playlist.id,
+        name: playlist.name,
+        mode: normalizePlaylistMode(playlist.mode),
+        remoteAccess: normalizePlaylistRemoteAccess(playlist.remoteAccess),
+      });
+    } catch (err) {
+      if (isPlaylistNameUniqueViolation(err)) throw new PlaylistNameConflictError(displayName);
+      throw err;
+    }
   } catch (err) {
     next(err);
   }
@@ -195,8 +198,20 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const id = parseInt(req.params.id as string);
     const { name, musicBotId, mode, remoteAccess } = req.body;
 
+    const existing = await prisma.playlist.findUnique({ where: { id } });
+    if (!existing) throw new AppError(404, 'Playlist not found');
+
     const data: Record<string, unknown> = {};
-    if (name != null) data.name = name;
+    if (name != null) {
+      const displayName = normalizePlaylistDisplayName(String(name));
+      if (!displayName) throw new AppError(400, 'name is required');
+      await ensurePlaylistNameKeyConstraintsReady(prisma);
+      const nameKey = normalizePlaylistNameKey(displayName);
+      const occupant = await findPlaylistNameOccupant(prisma, nameKey, existing.serverConfigId, id);
+      if (occupant) throw new PlaylistNameConflictError(displayName, occupant.id);
+      data.name = displayName;
+      data.nameKey = nameKey;
+    }
     if (musicBotId !== undefined) data.musicBotId = musicBotId ? parseInt(musicBotId) : null;
     if (mode !== undefined) data.mode = normalizePlaylistMode(mode);
 
@@ -206,33 +221,40 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
       data.remoteAccess = nextRemoteAccess;
     }
 
-    await prisma.$transaction(async (tx: any) => {
-      const current = await tx.playlist.findUnique({ where: { id } });
-      if (!current) throw new AppError(404, 'Playlist not found');
+    try {
+      await prisma.$transaction(async (tx: any) => {
+        const current = await tx.playlist.findUnique({ where: { id } });
+        if (!current) throw new AppError(404, 'Playlist not found');
 
-      if (Object.keys(data).length === 0) return;
+        if (Object.keys(data).length === 0) return;
 
-      const visibilityChanged =
-        nextRemoteAccess !== undefined &&
-        nextRemoteAccess !== normalizePlaylistRemoteAccess(current.remoteAccess);
+        const visibilityChanged =
+          nextRemoteAccess !== undefined &&
+          nextRemoteAccess !== normalizePlaylistRemoteAccess(current.remoteAccess);
 
-      await tx.playlist.update({ where: { id }, data });
+        await tx.playlist.update({ where: { id }, data });
 
-      if (visibilityChanged) {
-        await tx.adminAuditEvent.create({
-          data: buildRow({
-            actor: actorFromRequest(req.user),
-            action: 'playlist.remote_access_update',
-            connectionId: current.serverConfigId ?? null,
-            target: { type: 'playlist', id },
-            operationId: randomUUID(),
-            outcome: 'success',
-            resultCode: 'ok',
-            completedAt: new Date(),
-          }),
-        });
+        if (visibilityChanged) {
+          await tx.adminAuditEvent.create({
+            data: buildRow({
+              actor: actorFromRequest(req.user),
+              action: 'playlist.remote_access_update',
+              connectionId: current.serverConfigId ?? null,
+              target: { type: 'playlist', id },
+              operationId: randomUUID(),
+              outcome: 'success',
+              resultCode: 'ok',
+              completedAt: new Date(),
+            }),
+          });
+        }
+      });
+    } catch (err) {
+      if (isPlaylistNameUniqueViolation(err)) {
+        throw new PlaylistNameConflictError(String(data.name ?? existing.name));
       }
-    });
+      throw err;
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -332,12 +354,7 @@ playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
 
     const mode = effectivePlaylistMode(playlist);
     if (songs.some((song) => !songMatchesMode(song.source, mode))) {
-      throw new AppError(
-        400,
-        mode === 'local'
-          ? 'This local playlist only accepts local library songs'
-          : 'This stream playlist only accepts YouTube / URL songs',
-      );
+      throw new AppError(400, playlistModeMismatchMessage(mode));
     }
 
     const added = await appendSongsToPlaylist(prisma, playlistId, ids);

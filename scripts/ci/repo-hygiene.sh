@@ -113,6 +113,8 @@ export GIT_SHA=accept-check
 # base file, so that is how they are validated.
 declare -A compose_bases=(
   [docker-compose.nvidia.yml]=docker-compose.yml
+  # Overlay only patches backend + adds fetcher services; validate layered.
+  [docker-compose.media-fetcher.yml]=docker-compose.yml
 )
 
 for compose in "${compose_files[@]}"; do

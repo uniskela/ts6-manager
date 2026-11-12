@@ -150,7 +150,8 @@ describe('VoiceBotManager Auto-DJ integration', () => {
     assert.equal((await f.runtime.loadAutomationSource(2, { kind: 'playlist', id: 10 }, '7')).id, '4');
     assert.equal((await f.runtime.loadAutomationSource(2, { kind: 'playlist', id: 10 }, 'deleted-track')).id, '4');
     assert.equal(query.where.id, 10);
-    assert.deepEqual(query.where.OR, [{ serverConfigId: 2 }, { serverConfigId: null }]);
+    assert.deepEqual(query.where.AND[0].OR, [{ serverConfigId: 2 }, { serverConfigId: null }]);
+    assert.deepEqual(query.where.AND[1].OR, [{ musicBot: null }, { musicBot: { serverConfigId: 2 } }]);
     assert.deepEqual(query.include.songs.orderBy, { position: 'asc' });
   });
 
