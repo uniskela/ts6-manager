@@ -1,0 +1,53 @@
+# Isolated Bridge-D1 private-beta. Experimental. Opt-in. Not a production compose file.
+# Local image only, pinned to SOURCE_COMMIT. Do not push this image.
+# No published ports. restart: "no" — do not add restart loops.
+name: d1-private-beta
+
+services:
+  bridge:
+    image: ts6-discord-bridge-private-beta:${SOURCE_COMMIT:?set SOURCE_COMMIT to the exact git SHA}
+    build:
+      context: ../../..
+      dockerfile: packages/discord-bridge/lab/Dockerfile
+      args:
+        SOURCE_COMMIT: ${SOURCE_COMMIT}
+    container_name: d1-private-beta-bridge
+    restart: "no"
+    init: true
+    stop_grace_period: 30s
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: "1.0"
+    mem_limit: 512m
+    tmpfs:
+      - /tmp
+    env_file:
+      - .env
+    environment:
+      D1_RUNTIME_MODE: private-beta
+      D1_SOURCE_COMMIT: ${SOURCE_COMMIT}
+    command: ["src/lab/private-beta.ts"]
+    volumes:
+      - ./evidence:/app/packages/discord-bridge/evidence
+    logging:
+      driver: json-file
+      options:
+        max-size: "4m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "./node_modules/.bin/tsx", "src/lab/private-beta-health.ts"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    networks:
+      - d1-ts-lab
+
+networks:
+  d1-ts-lab:
+    external: true
+    name: d1-ts-lab

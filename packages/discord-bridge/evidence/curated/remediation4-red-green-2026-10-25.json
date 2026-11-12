@@ -1,0 +1,344 @@
+{
+ "label": "SIMULATED (real discord.js UserManager/REST classes, real node:test runner, fakes for the network edge). Not live Discord.",
+ "reviewedHead": "aff685adb0507121c36b4af440cfd1ca2a833400",
+ "R1": {
+  "finding": "Production REST lookup bypassed the eight-request limit (wrapper timeout released the slot while the request was still out)",
+  "reproduction": "Three batches of eight speakers whose REST user requests never settle, production timing, 5.3 s between batches. Real discord.js UserManager.fetch and REST.get; REST.request replaced by never-settling promises. Script run against aff685a's discord-bot.ts and human-filter.ts, and against the fix.",
+  "before": [
+   {
+    "afterBatch": 1,
+    "restRequestsStarted": 8,
+    "restUnsettledNow": 8,
+    "maxUnsettled": 8,
+    "filter": {
+     "pending": 0,
+     "stalled": 0,
+     "refused": 0,
+     "timedOut": 0,
+     "failed": 8,
+     "remembered": 8
+    },
+    "subscribed": 0
+   },
+   {
+    "afterBatch": 2,
+    "restRequestsStarted": 24,
+    "restUnsettledNow": 24,
+    "maxUnsettled": 24,
+    "filter": {
+     "pending": 8,
+     "stalled": 0,
+     "refused": 64,
+     "timedOut": 0,
+     "failed": 16,
+     "remembered": 16
+    },
+    "subscribed": 0
+   },
+   {
+    "afterBatch": 3,
+    "restRequestsStarted": 24,
+    "restUnsettledNow": 24,
+    "maxUnsettled": 24,
+    "filter": {
+     "pending": 8,
+     "stalled": 0,
+     "refused": 128,
+     "timedOut": 0,
+     "failed": 16,
+     "remembered": 16
+    },
+    "subscribed": 0
+   }
+  ],
+  "after": [
+   {
+    "afterBatch": 1,
+    "restRequestsStarted": 8,
+    "restUnsettledNow": 8,
+    "maxUnsettled": 8,
+    "filter": {
+     "pending": 8,
+     "stalled": 0,
+     "refused": 0,
+     "timedOut": 0,
+     "failed": 0,
+     "remembered": 0
+    },
+    "subscribed": 0
+   },
+   {
+    "afterBatch": 2,
+    "restRequestsStarted": 8,
+    "restUnsettledNow": 8,
+    "maxUnsettled": 8,
+    "filter": {
+     "pending": 8,
+     "stalled": 8,
+     "refused": 1008,
+     "timedOut": 8,
+     "failed": 8,
+     "remembered": 8
+    },
+    "subscribed": 0
+   },
+   {
+    "afterBatch": 3,
+    "restRequestsStarted": 8,
+    "restUnsettledNow": 8,
+    "maxUnsettled": 8,
+    "filter": {
+     "pending": 8,
+     "stalled": 8,
+     "refused": 1128,
+     "timedOut": 8,
+     "failed": 8,
+     "remembered": 8
+    },
+    "subscribed": 0
+   }
+  ],
+  "inSuiteTest": "discord-bot.receive.test.ts: 'with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)' failed on aff685a with 'requests started (24)'; passes after.",
+  "secondTestOnBefore": "'a slot is released only when its REST request settles...' also failed on aff685a, but only because it uses the identityLookup timing option that the fix adds (API red, not behavioural).",
+  "mutations": {
+   "original 5 s race restored": {
+    "failingTests": [
+     "with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)"
+    ]
+   },
+   "30 ms race restored": {
+    "failingTests": [
+     "with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)",
+     "a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap"
+    ]
+   },
+   "second lookup per user allowed after timeout": {
+    "failingTests": [
+     "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots"
+    ]
+   },
+   "slot freed on timeout": {
+    "failingTests": [
+     "with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)",
+     "a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap",
+     "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
+     "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots"
+    ]
+   }
+  }
+ },
+ "R2": {
+  "finding": "--update accepted incomplete runs and recorded them as the expected tests",
+  "reproduction": "Throwaway packages run through the real scripts/run-tests.mjs (old scripts from aff685a, then the fixed ones).",
+  "before": {
+   "exit-0-inside-first-test": {
+    "args": [
+     "--update"
+    ],
+    "exit": 0,
+    "manifestChanged": true,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "src/a.test.ts"
+     ]
+    },
+    "verdict": "updated scripts/expected-tests.json: 1 tests in 1 files",
+    "problems": []
+   },
+   "two-registered-first-only": {
+    "args": [
+     "--update"
+    ],
+    "exit": 0,
+    "manifestChanged": true,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "one"
+     ]
+    },
+    "verdict": "updated scripts/expected-tests.json: 1 tests in 1 files",
+    "problems": []
+   },
+   "normal-run-incomplete-manifest": {
+    "args": [],
+    "exit": 0,
+    "manifestChanged": false,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "one"
+     ]
+    },
+    "verdict": "verified: 1 tests in 1 files, none failed, skipped, todo or cancelled",
+    "problems": []
+   }
+  },
+  "after": {
+   "exit-0-inside-first-test": {
+    "args": [
+     "--update"
+    ],
+    "exit": 1,
+    "manifestChanged": false,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "one",
+      "two"
+     ]
+    },
+    "verdict": "TEST RUN NOT ACCEPTED:",
+    "problems": [
+     "FILE WRAPPER src/a.test.ts: node:test reported the file as a whole (pass) instead of its tests, which it does only when the file's process ended without its own report",
+     "INCOMPLETE src/a.test.ts: node:test reported the end of this file 0 times, expected once (it exited, was killed or never started)",
+     "UNLISTED src/a.test.ts: a test file with no expected tests (run with --update after reviewing it)",
+     "NOT RUN src/a.test.ts: no test in this file reported a result"
+    ]
+   },
+   "two-registered-first-only": {
+    "args": [
+     "--update"
+    ],
+    "exit": 1,
+    "manifestChanged": false,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "one",
+      "two"
+     ]
+    },
+    "verdict": "TEST RUN NOT ACCEPTED:",
+    "problems": [
+     "INCOMPLETE src/a.test.ts: node:test reported the end of this file 0 times, expected once (it exited, was killed or never started)",
+     "NEVER FINISHED src/a.test.ts: \"two\" was registered but reported no result"
+    ]
+   },
+   "normal-run-incomplete-manifest": {
+    "args": [],
+    "exit": 1,
+    "manifestChanged": false,
+    "manifestAfter": {
+     "src/a.test.ts": [
+      "one"
+     ]
+    },
+    "verdict": "TEST RUN NOT ACCEPTED:",
+    "problems": [
+     "INCOMPLETE src/a.test.ts: node:test reported the end of this file 0 times, expected once (it exited, was killed or never started)",
+     "NEVER FINISHED src/a.test.ts: \"two\" was registered but reported no result"
+    ]
+   }
+  },
+  "mutations": {
+   "no per-file summary check": {
+    "failingTests": [
+     "--update refuses a test process that exits with status zero before it reports, and keeps the previous list",
+     "--update refuses a file that registers two tests and terminates after the first, and keeps the previous list",
+     "a normal run rejects an incomplete list that matches what the unfinished run reported",
+     "fails a truncated report even though nothing failed (the forced-exit symptom)",
+     "fails when the discovered, expected and reported files are not exactly the same set",
+     "fails a file that never reported node:test's end-of-file summary, although every expected test passed",
+     "fails a run whose event stream was cut short, or whose end node:test never reported or reported as failed"
+    ]
+   },
+   "no registered-vs-finished check": {
+    "failingTests": [
+     "--update refuses a file that registers two tests and terminates after the first, and keeps the previous list",
+     "a normal run rejects an incomplete list that matches what the unfinished run reported",
+     "fails a truncated report even though nothing failed (the forced-exit symptom)",
+     "fails a test that was registered and scheduled but never reported, even when the expected list agrees with the run"
+    ]
+   },
+   "no file-wrapper check": {
+    "failingTests": [
+     "--update refuses a test process that exits with status zero before it reports, and keeps the previous list",
+     "fails a file that node:test reported as a whole, whether it passed or failed"
+    ]
+   },
+   "no end-of-stream check": {
+    "failingTests": [
+     "fails a run whose event stream was cut short, or whose end node:test never reported or reported as failed"
+    ]
+   },
+   "no manifest validation": {
+    "failingTests": [
+     "a normal run rejects a corrupted expected list instead of trusting it"
+    ]
+   },
+   "non-atomic update write": {
+    "failingTests": [
+     "--update records test names, and a second run against them is accepted"
+    ]
+   },
+   "reporter drops enqueue": {
+    "failingTests": [
+     "accepts a fixture that matches exactly (control)",
+     "--update refuses a file that registers two tests and terminates after the first, and keeps the previous list",
+     "a normal run rejects an incomplete list that matches what the unfinished run reported",
+     "--update records test names, and a second run against them is accepted"
+    ]
+   }
+  }
+ },
+ "R3": {
+  "finding": "One ticker exception suppressed both audio directions",
+  "beforeTestResults(aff685a runtime.ts)": {
+   "an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak": "fail",
+   "a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot": "fail",
+   "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime": "fail"
+  },
+  "beforeNotes": "The overflow and both-directions tests fail behaviourally (Discord audio stops; the mix tick never runs). The mix-direction test fails on aff685a only on the new tickErrors field: there the overflow tick runs first, so a mix failure never blocked it.",
+  "afterTestResults": {
+   "activates the healthy successor while the failed bot's reconnect is still pending": "pass",
+   "activates the successor before any unrelated reconnect is attempted": "pass",
+   "a pending reconnect does not hold the queue: a new TeamSpeak user still gets a bot promptly": "pass",
+   "preserves the receiveGeneration fence across the failover": "pass",
+   "a failed reconnect is retried with a bounded backoff and then given up on": "pass",
+   "never joins again after stop, even when bots report their own intentional leave as a failure": "pass",
+   "ignores directory and bot events after stop, and removes its listeners": "pass",
+   "cancels work that is still queued and aborts a join that is in flight, promptly": "pass",
+   "stops the 20 ms ticker and invalidates reception": "pass",
+   "is idempotent and cannot be restarted": "pass",
+   "a failure while handling a TeamSpeak voice packet does not throw out of the UDP callback": "pass",
+   "a failure while handling a Discord frame is contained and counted": "pass",
+   "a throw from the Discord-to-TeamSpeak tick is counted, the runtime stays up, and later audio is still sent": "pass",
+   "a throw from the TeamSpeak-to-Discord overflow tick is counted, the runtime stays up, and later overflow audio is still sent": "pass",
+   "a TeamSpeak transport that throws while the tick sends is counted, and the next frames are sent": "pass",
+   "an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak": "pass",
+   "a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot": "pass",
+   "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime": "pass"
+  },
+  "mutations": {
+   "one shared boundary (the reviewed code)": {
+    "exit": 1,
+    "failingTests": [
+     "an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak",
+     "a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot",
+     "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime"
+    ]
+   },
+   "overflow boundary removed": {
+    "exit": 1,
+    "failingTests": [
+     "a throw from the TeamSpeak-to-Discord overflow tick is counted, the runtime stays up, and later overflow audio is still sent",
+     "an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak",
+     "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime"
+    ]
+   },
+   "mix boundary removed": {
+    "exit": 1,
+    "failingTests": [
+     "a throw from the Discord-to-TeamSpeak tick is counted, the runtime stays up, and later audio is still sent",
+     "a TeamSpeak transport that throws while the tick sends is counted, and the next frames are sent",
+     "a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot",
+     "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime"
+    ]
+   },
+   "log throttle removed": {
+    "exit": 1,
+    "failingTests": [
+     "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime",
+     "a million failures at one site write the first five lines and then one per power of two"
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,44 @@
+{
+  "at": "2026-10-25T09:15:51.901Z",
+  "node": "v24.21.0",
+  "checks": [
+    {
+      "id": "node",
+      "title": "Node v24.21.0",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "v24.21.0, abi 137"
+    },
+    {
+      "id": "native-opus",
+      "title": "Native @discordjs/opus loads and round-trips",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "native, 373-byte packets, 1 kHz survives a 10-frame round trip"
+    },
+    {
+      "id": "opusscript",
+      "title": "opusscript fallback loads and round-trips",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "opusscript, 373-byte packets, 1 kHz survives a 10-frame round trip"
+    },
+    {
+      "id": "native-dave",
+      "title": "Native @snazzah/davey loads and creates an MLS key package",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "DAVE protocol v1, key package 394 bytes"
+    },
+    {
+      "id": "voice-report",
+      "title": "@discordjs/voice dependency report shows DAVE + Opus + native AES-256-GCM",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "- @discordjs/voice: 0.19.2; - prism-media: 1.3.5; - @discordjs/opus: 0.10.0; - opusscript: 0.1.1; - native crypto support for aes-256-gcm: yes; - @snazzah/davey: 0.1.12"
+    }
+  ],
+  "data": {
+    "dependencyReport": "--------------------------------------------------\nCore Dependencies\n- @discordjs/voice: 0.19.2\n- prism-media: 1.3.5\n\nOpus Libraries\n- @discordjs/opus: 0.10.0\n- opusscript: 0.1.1\n\nEncryption Libraries\n- native crypto support for aes-256-gcm: yes\n- sodium-native: not found\n- sodium: not found\n- libsodium-wrappers: not found\n- @stablelib/xchacha20poly1305: not found\n- @noble/ciphers: not found\n\nDAVE Libraries\n- @snazzah/davey: 0.1.12\n\nFFmpeg\n- not found\n--------------------------------------------------"
+  }
+}
