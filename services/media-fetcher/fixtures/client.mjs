@@ -110,6 +110,54 @@ if (op === 'hold-cancel') {
   process.exit(0);
 }
 
+/** Abrupt peer destroy mid-stream (backend /stop). Fetcher must stay alive. */
+if (op === 'abrupt-stop') {
+  const jobId = arg('id', 'abrupt1');
+  const started = net.connect(sockPath);
+  let header;
+  let buf = '';
+  let pcm = 0;
+  started.on('connect', () => {
+    started.write(JSON.stringify({
+      op: 'submit', token, jobId, url: arg('url'),
+      hosts: ['origin'], ports: arg('ports', '8000').split(',').map(Number),
+    }) + '\n');
+  });
+  started.on('data', (chunk) => {
+    if (!header) {
+      buf += chunk.toString('latin1');
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      header = JSON.parse(buf.slice(0, nl));
+      pcm += Buffer.byteLength(buf.slice(nl + 1), 'latin1');
+      return;
+    }
+    pcm += chunk.length;
+  });
+  started.on('error', () => {});
+  await new Promise((r) => setTimeout(r, Number(arg('ms', '600'))));
+  started.destroy();
+  await new Promise((r) => setTimeout(r, 400));
+  const status = await rpc({ op: 'status' });
+  const nextUrl = arg('next-url', arg('url'));
+  const again = await rpc({
+    op: 'submit',
+    jobId: arg('next', 'after-abrupt'),
+    url: nextUrl,
+    hosts: ['origin'],
+    ports: arg('ports', '8000').split(',').map(Number),
+  }, { collectPcm: true, timeoutMs: Number(arg('timeout', '15000')) });
+  process.stdout.write(JSON.stringify({
+    started: header,
+    pcmBeforeDestroy: pcm,
+    statusAfter: status.header,
+    next: { header: again.header, bytes: again.bytes },
+  }) + '\n');
+  const jobsAfter = status.header?.jobs || [];
+  const cleared = !jobsAfter.includes(jobId);
+  process.exit(header?.ok && status.header?.ok && cleared && again.header?.ok && again.bytes > 0 ? 0 : 1);
+}
+
 if (op === 'status') {
   process.stdout.write(JSON.stringify((await rpc({ op: 'status' })).header) + '\n');
 }

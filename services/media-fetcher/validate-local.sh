@@ -274,6 +274,19 @@ FF=$(docker exec "$P-fetcher" sh -c 'for p in /proc/[0-9]*; do c=$(tr "\0" " " <
 [[ "${FF:-0}" -eq 0 ]] || fail "orphaned ffmpeg after cancel ($FF)"
 pass "cancel cleanup"
 
+# Abrupt client destroy mid-stream (/stop): fetcher must stay up; next job must work.
+ABRUPT=$(backend abrupt-stop --id abrupt1 --next after-abrupt \
+  --url http://origin:8000/hold --next-url http://origin:8000/stream --ms 600 --ports 8000 || true)
+echo "$ABRUPT" | grep -q '"ok":true' || fail "abrupt-stop response $ABRUPT"
+AFTER_ABRUPT_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.next&&j.next.bytes||0))" "$ABRUPT")
+[[ "$AFTER_ABRUPT_BYTES" -gt 0 ]] || fail "post-abrupt job failed $ABRUPT"
+FF2=$(docker exec "$P-fetcher" sh -c 'for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null || true); echo "$c"; done' | grep -c ffmpeg || true)
+[[ "${FF2:-0}" -eq 0 ]] || fail "orphaned ffmpeg after abrupt-stop ($FF2)"
+docker logs "$P-fetcher" 2>&1 | grep -E 'Unhandled .error. event|FETCHER client disconnect' | tail -5
+docker logs "$P-fetcher" 2>&1 | grep -q 'Unhandled' && fail "fetcher unhandled after abrupt-stop"
+docker logs "$P-fetcher" 2>&1 | grep -q 'FETCHER client disconnect' || fail "missing disconnect log after abrupt-stop"
+pass "abrupt-stop survives ($AFTER_ABRUPT_BYTES pcm next)"
+
 # Proxy down
 docker stop "$P-proxy" >/dev/null
 PROXY_DOWN=$(backend submit --id nopx --url http://origin:8000/stream --ports 8000 || true)

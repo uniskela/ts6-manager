@@ -8,6 +8,7 @@ import { radioFfmpegArgs } from './ffmpeg-args.mjs';
 import { landlockDisabledByEnv, parseCheckOutput } from './landlock.mjs';
 import { peerPid } from './peer-pid.mjs';
 import { allocateJobId, allowTlsConnect, constrainRadioPorts, parseJobId } from './policy.mjs';
+import { attachClientSocketLifecycle } from './socket-guards.mjs';
 import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const sockPath = process.env.JOBS_SOCK || '/jobs/jobs.sock';
@@ -191,6 +192,13 @@ async function finish(job) {
 
 async function handle(socket) {
   let buf = Buffer.alloc(0);
+  /** @type {{ id: string, child: import('node:child_process').ChildProcess, shim: object, timer: NodeJS.Timeout, done?: boolean } | null} */
+  let job = null;
+  // Attach before any await/write: backend /stop destroys the peer and emits
+  // ECONNRESET; without a listener Node throws and kills the fetcher.
+  attachClientSocketLifecycle(socket, {
+    onTeardown: () => { void finish(job).catch(() => {}); },
+  });
   socket.on('data', async (chunk) => {
     if (buf === null) return;
     buf = Buffer.concat([buf, chunk]);
@@ -222,9 +230,9 @@ async function handle(socket) {
         socket.end(JSON.stringify({ ok: false, error: 'bad-job-id' }) + '\n');
         return;
       }
-      const job = jobs.get(jobId);
-      await finish(job);
-      socket.end(JSON.stringify({ ok: true, cancelled: jobId, existed: Boolean(job) }) + '\n');
+      const existing = jobs.get(jobId);
+      await finish(existing);
+      socket.end(JSON.stringify({ ok: true, cancelled: jobId, existed: Boolean(existing) }) + '\n');
       return;
     }
     if (msg.op !== 'submit') {
@@ -276,7 +284,7 @@ async function handle(socket) {
       return;
     }
     shim.allowPid(child.pid);
-    const job = {
+    job = {
       id: jobId,
       child,
       shim,
@@ -305,7 +313,7 @@ async function handle(socket) {
       void finish(job).catch(() => {});
       void status;
     });
-    socket.on('close', () => { void finish(job).catch(() => {}); });
+    // socket close/error → finish via attachClientSocketLifecycle (idempotent)
   });
 }
 
