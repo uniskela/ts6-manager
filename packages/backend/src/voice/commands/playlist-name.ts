@@ -62,6 +62,21 @@ export type PlaylistNameConflictRow = {
   names: string[];
 };
 
+export type PlaylistEmptyNormalizedRow = {
+  id: number;
+  name: string;
+  serverConfigId: number | null;
+};
+
+export type PlaylistNameKeyCompatibilityResult = {
+  playlistCount: number;
+  conflicts: PlaylistNameConflictRow[];
+  emptyNormalized: PlaylistEmptyNormalizedRow[];
+  /** False when finalisation / uniqueness install would refuse. */
+  compatible: boolean;
+  report: string;
+};
+
 type PlaylistRow = { id: number; name: string; serverConfigId: number | null; nameKey?: string | null };
 
 type NameLookupDb = {
@@ -75,6 +90,85 @@ type NameLookupDb = {
   $executeRawUnsafe?(sql: string, ...values: unknown[]): Promise<unknown>;
   $queryRawUnsafe?(sql: string, ...values: unknown[]): Promise<unknown>;
 };
+
+/**
+ * Read playlist id/name/scope (and nameKey when present) without Prisma model
+ * selects that require the nameKey column. Safe on legacy v1.11.x databases and
+ * on already-upgraded schemas. Read-only.
+ */
+export async function loadPlaylistRowsForNameKeyCompatibility(db: NameLookupDb): Promise<PlaylistRow[]> {
+  if (!db.$queryRawUnsafe) {
+    return db.playlist.findMany({
+      where: { id: { gte: 0 } },
+      select: { id: true, name: true, serverConfigId: true, nameKey: true },
+    });
+  }
+  const tables = await db.$queryRawUnsafe(
+    `SELECT name AS name FROM sqlite_master WHERE type = 'table' AND name = 'Playlist'`,
+  ) as Array<{ name: string }>;
+  if (!tables.length) return [];
+
+  const cols = await db.$queryRawUnsafe(
+    `PRAGMA table_info("Playlist")`,
+  ) as Array<{ name: string }>;
+  const hasNameKey = cols.some((c) => c.name === 'nameKey');
+  if (hasNameKey) {
+    return await db.$queryRawUnsafe(
+      `SELECT "id" AS id, "name" AS name, "serverConfigId" AS serverConfigId, "nameKey" AS nameKey FROM "Playlist"`,
+    ) as PlaylistRow[];
+  }
+  return await db.$queryRawUnsafe(
+    `SELECT "id" AS id, "name" AS name, "serverConfigId" AS serverConfigId FROM "Playlist"`,
+  ) as PlaylistRow[];
+}
+
+/**
+ * Project JS nameKeys and report every condition that would make finalisation refuse:
+ * same-scope duplicates, shared↔server collisions, and blank / whitespace-only names
+ * (empty normalised keys). Never mutates rows.
+ */
+export function assessPlaylistNameKeyCompatibility(rows: PlaylistRow[]): PlaylistNameKeyCompatibilityResult {
+  const projected = rows.map((row) => ({
+    ...row,
+    nameKey: normalizePlaylistNameKey(row.name),
+  }));
+  const emptyNormalized: PlaylistEmptyNormalizedRow[] = projected
+    .filter((row) => !row.nameKey)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      serverConfigId: row.serverConfigId,
+    }));
+  const conflicts = collectPlaylistNameConflicts(projected);
+  const compatible = conflicts.length === 0 && emptyNormalized.length === 0;
+  return {
+    playlistCount: rows.length,
+    conflicts,
+    emptyNormalized,
+    compatible,
+    report: formatPlaylistNameKeyCompatibilityReport(conflicts, emptyNormalized),
+  };
+}
+
+export function formatPlaylistNameKeyCompatibilityReport(
+  conflicts: PlaylistNameConflictRow[],
+  emptyNormalized: PlaylistEmptyNormalizedRow[] = [],
+): string {
+  const parts: string[] = [];
+  if (conflicts.length) {
+    parts.push(formatPlaylistNameConflictReport(conflicts));
+  }
+  if (emptyNormalized.length) {
+    parts.push(
+      emptyNormalized.map((row) => {
+        const scope = row.serverConfigId == null ? 'shared' : `serverConfigId=${row.serverConfigId}`;
+        return `empty_normalized ${scope} id=${row.id} name=${JSON.stringify(row.name)}`;
+      }).join('\n'),
+    );
+  }
+  if (!parts.length) return 'No playlist nameKey conflicts.';
+  return parts.join('\n');
+}
 
 /**
  * Catalog-safe availability for a target scope.
@@ -180,10 +274,7 @@ export function collectPlaylistNameConflicts(rows: PlaylistRow[]): PlaylistNameC
 }
 
 export async function findAllPlaylistNameConflicts(db: NameLookupDb): Promise<PlaylistNameConflictRow[]> {
-  const rows = await db.playlist.findMany({
-    where: { id: { gte: 0 } },
-    select: { id: true, name: true, serverConfigId: true, nameKey: true },
-  });
+  const rows = await loadPlaylistRowsForNameKeyCompatibility(db);
   return collectPlaylistNameConflicts(rows);
 }
 
@@ -200,6 +291,18 @@ export function formatPlaylistNameConflictReport(conflicts: PlaylistNameConflict
       : c.serverConfigId == null ? 'shared' : `serverConfigId=${c.serverConfigId}`;
     return `${c.kind} ${scope} nameKey=${JSON.stringify(c.nameKey)} ids=[${c.ids.join(',')}] names=${JSON.stringify(c.names)}`;
   }).join('\n');
+}
+
+/**
+ * Read-only pre-upgrade / pre-push compatibility check.
+ * Uses raw SQL so legacy databases without nameKey are safe to inspect.
+ * Never writes nameKey values, never installs constraints, never alters schema.
+ */
+export async function preflightPlaylistNameKeyCompatibility(
+  db: NameLookupDb,
+): Promise<PlaylistNameKeyCompatibilityResult> {
+  const rows = await loadPlaylistRowsForNameKeyCompatibility(db);
+  return assessPlaylistNameKeyCompatibility(rows);
 }
 
 export async function allocateUniquePlaylistDisplayName(
@@ -368,35 +471,33 @@ export async function finalizePlaylistNameKeyMigration(db: NameLookupDb): Promis
 }
 
 /**
- * Non-destructive preview: projects JS nameKeys and reports conflicts.
- * Does not write nameKey values or install constraints.
+ * Non-destructive preview: projects JS nameKeys and reports every refusal
+ * condition (conflicts + empty/whitespace-only names). Does not write nameKey
+ * values or install constraints. Safe on legacy DBs without a nameKey column.
  */
 export async function previewPlaylistNameKeyMigration(db: NameLookupDb): Promise<{
   playlistCount: number;
   wouldBackfill: number;
   constraintsReady: boolean;
   conflicts: PlaylistNameConflictRow[];
+  emptyNormalized: PlaylistEmptyNormalizedRow[];
+  compatible: boolean;
   report: string;
 }> {
-  const rows = await db.playlist.findMany({
-    where: { id: { gte: 0 } },
-    select: { id: true, name: true, serverConfigId: true, nameKey: true },
-  });
-  const projected = rows.map((row) => ({
-    ...row,
-    nameKey: normalizePlaylistNameKey(row.name),
-  }));
+  const rows = await loadPlaylistRowsForNameKeyCompatibility(db);
+  const assessment = assessPlaylistNameKeyCompatibility(rows);
   const wouldBackfill = rows.filter(
     (row) => (row.nameKey ?? '') !== normalizePlaylistNameKey(row.name),
   ).length;
-  const conflicts = collectPlaylistNameConflicts(projected);
   const constraintsReady = await playlistNameKeyConstraintsReady(db);
   return {
-    playlistCount: rows.length,
+    playlistCount: assessment.playlistCount,
     wouldBackfill,
     constraintsReady,
-    conflicts,
-    report: formatPlaylistNameConflictReport(conflicts),
+    conflicts: assessment.conflicts,
+    emptyNormalized: assessment.emptyNormalized,
+    compatible: assessment.compatible,
+    report: assessment.report,
   };
 }
 

@@ -198,25 +198,46 @@ Every backend container start runs `docker-commands/apply-schema.sh`.
 For an existing persistent database the startup path:
 
 1. checks the schema-version marker;
-2. applies the current Prisma schema with `prisma db push`;
-3. **finalises playlist `nameKey` uniqueness** (JS backfill → conflict preflight → partial unique indexes and triggers);
-4. seeds required data when needed; and
-5. records the current schema version only after step 3 succeeds.
+2. **preflight playlist name compatibility** (read-only; uses the same JS `trim()` + `toLowerCase()` rules as the app). If duplicates, shared↔server collisions, or blank/whitespace-only playlist names would make uniqueness install refuse, startup **stops here** and leaves the database and schema **unchanged**;
+3. applies the current Prisma schema with `prisma db push`;
+4. **finalises playlist `nameKey` uniqueness** (JS backfill → conflict check → partial unique indexes and triggers);
+5. seeds required data when needed; and
+6. records the current schema version only after step 4 succeeds.
 
-`prisma db push` alone cannot install the playlist uniqueness rules (they are partial SQLite indexes and cross-namespace triggers). The finalisation step never renames, merges, or deletes playlists. If two playlists would share a normalised name in the same scope, finalisation **refuses**, the schema version is **not** recorded, and the backend does not start — so the next restart retries after you fix the duplicates (or restore a backup).
+`prisma db push` alone cannot install the playlist uniqueness rules (they are partial SQLite indexes and cross-namespace triggers). Preflight and finalisation never rename, merge, or delete playlists.
 
-Preview without writing constraints (from `packages/backend`, with `DATABASE_URL` set):
+### Preview playlist name compatibility (published images)
+
+Published backend images ship the compiled CLI (no TypeScript/`tsx` required). With the backend container running, or against a **copy** of `ts6webui.db`:
 
 ```bash
-node --import tsx src/voice/commands/playlist-namekey-finalize-cli.ts --preview
+docker compose exec backend \
+  node dist/voice/commands/playlist-namekey-finalize-cli.js --preview
 ```
+
+All-in-one image (service name may differ):
+
+```bash
+docker compose -f docker-compose.all-in-one.yml exec backend \
+  node dist/voice/commands/playlist-namekey-finalize-cli.js --preview
+```
+
+Exit code `0` means compatible; non-zero prints a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) with playlist ids and names. Prefer running preview on a **copied** database before upgrading.
 
 ### Backup, restore, and rollback (schema)
 
 1. **Backup** before upgrading: stop the backend, then copy `ts6webui.db` plus any `-wal`/`-shm` journal files and the data volume.
 2. **Upgrade** with the new image (apply-schema runs automatically).
-3. **If nameKey finalisation fails:** read the conflict report in the `[nameKey]` / `[schema]` logs. Resolve duplicate playlist names in a **copy** of the database first, or restore the backup and stay on the previous image until duplicates are cleaned.
-4. **Rollback** always means previous image tag **and** matching database backup. Do not point an older image at a database that already received newer columns without restoring the backup.
+
+Distinguish these outcomes:
+
+| Situation | Database state | What to do |
+|-----------|----------------|------------|
+| **Failed preflight** (before `db push`) | Original schema and rows unchanged | Previous image tag can start against this database. Fix duplicate/blank names on a **copy**, then upgrade again; or stay on the previous image. |
+| **Successful schema upgrade** (push + finalise recorded) | Newer columns/constraints present | Rollback needs the **previous image tag and the matching database backup**. Do not point an older image at the upgraded database and expect a clean start. |
+| **Partial upgrade** (older image already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run the new image so finalisation can complete. |
+
+Image-only rollback after a successful schema migration is **not** supported.
 
 A normal Docker upgrade still does not require a separate manual SQL migration when the database is conflict-free.
 

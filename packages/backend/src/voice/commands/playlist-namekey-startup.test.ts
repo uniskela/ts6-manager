@@ -70,6 +70,8 @@ describe('playlist nameKey startup finalisation (db push companion)', () => {
       const preview = await previewPlaylistNameKeyMigration(prisma as any);
       assert.equal(preview.constraintsReady, false);
       assert.equal(preview.conflicts.length, 0);
+      assert.equal(preview.emptyNormalized.length, 0);
+      assert.equal(preview.compatible, true);
       assert.ok(preview.wouldBackfill >= 1);
 
       const first = await finalizePlaylistNameKeyMigration(prisma as any);
@@ -131,6 +133,7 @@ describe('playlist nameKey startup finalisation (db push companion)', () => {
           ('ROCK', '', 'stream', 1, CURRENT_TIMESTAMP)`,
       );
       const preview = await previewPlaylistNameKeyMigration(prisma as any);
+      assert.equal(preview.compatible, false);
       assert.ok(preview.conflicts.some((c) => c.nameKey === 'rock'));
       await assert.rejects(
         () => finalizePlaylistNameKeyMigration(prisma as any),

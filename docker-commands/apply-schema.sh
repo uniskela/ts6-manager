@@ -53,6 +53,43 @@ if [ ! -f "$PRISMA_CLI" ]; then
   exit 1
 fi
 
+# Ensure Prisma/CLI share the same SQLite file apply-schema is inspecting.
+if [ -z "${DATABASE_URL:-}" ]; then
+  export DATABASE_URL="file:$DB_FILE"
+fi
+
+NAMEKEY_CLI=""
+if [ -f "$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js"
+elif [ -f "$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts"
+fi
+if [ -z "$NAMEKEY_CLI" ]; then
+  echo "[schema] playlist-namekey-finalize-cli missing" >&2
+  exit 1
+fi
+
+run_namekey_cli() {
+  flag="$1"
+  if [ "${NAMEKEY_CLI%.ts}" != "$NAMEKEY_CLI" ]; then
+    node --import tsx "$NAMEKEY_CLI" "$flag"
+  else
+    node "$NAMEKEY_CLI" "$flag"
+  fi
+}
+
+# F1: refuse incompatible legacy playlist names BEFORE prisma db push mutates
+# the schema. Read-only preflight; a failure leaves the original database and
+# schema unchanged so the previous image can still start.
+if [ "$DB_EXISTS" -eq 1 ]; then
+  echo "[schema] Preflight: playlist nameKey compatibility (read-only, before db push)"
+  if ! run_namekey_cli --preflight; then
+    echo "[schema] Playlist name compatibility preflight failed — database left unchanged." >&2
+    echo "[schema] Resolve duplicate/blank playlist names on a copy, or restore backup and stay on the previous image." >&2
+    exit 1
+  fi
+fi
+
 echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
 # The Prisma CLI's update check forks a detached node process. If the check hangs
 # (for example when outbound traffic is filtered) it outlives this script and,
@@ -65,23 +102,8 @@ CHECKPOINT_DISABLE=1 node "$PRISMA_CLI" db push --skip-generate
 # Conflicts refuse finalisation without renaming/deleting playlists; schema
 # version is not recorded so the next start retries after the operator fixes
 # duplicates (restore backup if needed).
-NAMEKEY_CLI=""
-if [ -f "$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js" ]; then
-  NAMEKEY_CLI="$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js"
-elif [ -f "$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts" ]; then
-  NAMEKEY_CLI="$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts"
-fi
-if [ -n "$NAMEKEY_CLI" ]; then
-  echo "[schema] Finalising playlist nameKey uniqueness"
-  if [ "${NAMEKEY_CLI%.ts}" != "$NAMEKEY_CLI" ]; then
-    node --import tsx "$NAMEKEY_CLI" --confirm-finalize
-  else
-    node "$NAMEKEY_CLI" --confirm-finalize
-  fi
-else
-  echo "[schema] playlist-namekey-finalize-cli missing" >&2
-  exit 1
-fi
+echo "[schema] Finalising playlist nameKey uniqueness"
+run_namekey_cli --confirm-finalize
 
 # Seed is safe to re-run (script uses upsert / ignores existing values).
 if node prisma/seed.mjs; then
