@@ -1,0 +1,8 @@
+# Path A Phase 1: hex fixtures introduced in 988c057d then replaced with
+# ts6-*-token-* placeholders in 1da18108. Gitleaks still scans the old commit.
+988c057dbad44d62c5106e1dc28f96db68bbc855:packages/backend/src/voice/egress/media-fetcher-client.test.ts:generic-api-key:53
+988c057dbad44d62c5106e1dc28f96db68bbc855:packages/backend/src/voice/egress/media-fetcher-client.test.ts:generic-api-key:72
+988c057dbad44d62c5106e1dc28f96db68bbc855:packages/backend/src/voice/egress/media-fetcher-client.test.ts:generic-api-key:96
+988c057dbad44d62c5106e1dc28f96db68bbc855:packages/backend/src/voice/egress/media-fetcher-client.test.ts:generic-api-key:138
+988c057dbad44d62c5106e1dc28f96db68bbc855:packages/backend/src/voice/egress/media-fetcher-client.test.ts:generic-api-key:167
+988c057dbad44d62c5106e1dc28f96db68bbc855:services/media-fetcher/validate-local.sh:generic-api-key:92

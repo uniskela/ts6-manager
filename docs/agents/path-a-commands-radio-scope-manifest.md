@@ -357,3 +357,4 @@
 ## Path A CI adaptation (post file-set)
 
 - Replaced gitleaks-flagged hex fixture tokens in `media-fetcher-client.test.ts`, `validate-local.sh`, and `token.test.mjs` with obvious `ts6-*-token-*` placeholders (behaviour unchanged; Path A introduces these lines as a new commit vs main).
+- Added `.gitleaksignore` fingerprints for the superseded hex fixtures in commit `988c057d` (tip uses non-secret placeholders).
