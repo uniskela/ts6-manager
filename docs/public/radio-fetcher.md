@@ -25,7 +25,22 @@ docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml up -d
 
 The overlay copies the host token into the jobs volume as uid `1000` mode `600`, shares a unix job socket on that volume, and keeps the fetcher off the app network. No fetcher or proxy ports are published.
 
-The overlay **builds** `ts6-media-fetcher:local` from `services/media-fetcher`. It is not published to GHCR with the backend/frontend/sidecar images. Portainer and Coolify stacks that only pull GHCR cannot start radio until they build this context (or load a local image).
+By default the overlay **builds** `ts6-media-fetcher:local` from `services/media-fetcher`. Release tags also publish immutable images:
+
+| Registry | Example tag |
+|---|---|
+| GHCR | `ghcr.io/uniskela/ts6-manager/media-fetcher:vX.Y.Z` (also `:sha-…`, `:X.Y.Z`, `:X.Y`) |
+| Docker Hub mirror (when configured) | `uniskela/ts6-manager:media-fetcher-vX.Y.Z` |
+
+To pull a published image instead of building locally:
+
+~~~bash
+export MEDIA_FETCHER_IMAGE=ghcr.io/uniskela/ts6-manager/media-fetcher:vX.Y.Z
+docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml pull
+docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml up -d
+~~~
+
+Architecture: linux/amd64 (same release builders as the other components). The fetcher still requires Landlock ABI ≥ 4 on the **host kernel** regardless of how the image was obtained.
 
 The backend looks for:
 
@@ -55,8 +70,20 @@ The fetcher process will not start unless Landlock can enforce TCP `CONNECT` to 
 ## Docker Compose and Portainer
 
 - Compose: always pass **both** files (`docker-compose.yml` then `docker-compose.media-fetcher.yml`). The overlay is not a standalone stack. Compose v2 is required (`depends_on` with `service_completed_successfully`).
-- Portainer: add the overlay as a second compose file on the same stack and **build** the fetcher image from this repository. Bind the host token only into the `media-fetcher-token` installer (`/src/token`). Do not paste the token into Portainer environment fields.
+- Portainer / Coolify: add the overlay as a second compose file on the same stack. Prefer pulling `MEDIA_FETCHER_IMAGE` from GHCR for a release tag, or build from `services/media-fetcher` when developing. Bind the host token only into the `media-fetcher-token` installer (`/src/token`). Do not paste the token into Portainer environment fields.
 - Do not publish fetcher or proxy ports. Do not mount the Docker socket.
+
+## Deployment matrix
+
+| Environment | Radio supported? | Notes |
+|---|---|---|
+| Linux 6.7+ split Compose + overlay (build or GHCR image) | Yes | Preferred production path |
+| Portainer/Coolify on Linux 6.7+ with overlay + token | Yes | Same Landlock requirement |
+| Linux 6.1 / 5.x / Landlock ABI below 4 | No | Fetcher refuses to start; radio fails closed |
+| All-in-one image alone | No | No fetcher sidecar in that image |
+| Windows / macOS native backend | No | Radio fails closed |
+| Backend without overlay | No | Fail closed; no insecure in-process fallback |
+| `MEDIA_FETCHER=legacy` | No | Not supported; ignored as a safety switch |
 
 ## Filesystem ownership and token permissions
 

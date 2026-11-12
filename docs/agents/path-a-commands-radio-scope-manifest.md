@@ -3,7 +3,7 @@
 - Base: `origin/main` @ `2359748ff41cc862784cb7e6ebf40f70330dbf88`
 - Source tip: integration `1de19c86c23af49c5d4f9a45425ad97915c679f0`
 - Method: file-set checkout (not 144-commit cherry-pick)
-- Included paths: 176
+- Included paths: 188 changed vs origin/main; table 189 rows including net-zero `pnpm-workspace.yaml`
 - Explicitly excluded D1 paths: 150
 
 ## Exclusions (D1 / unfinished bridge)
@@ -169,12 +169,12 @@
 | `.gitignore` | unchanged-from-integration | Ignore INT local env/job dirs |  |
 | `docker-compose.discord-int-media-fetcher.yml` | unchanged-from-integration | INT lab compose (non-prod) |  |
 | `docker-compose.discord-int-ts.yml` | unchanged-from-integration | INT lab compose (non-prod) |  |
-| `docker-compose.media-fetcher.yml` | unchanged-from-integration | Production-style fetcher overlay (radio fail-closed without it) |  |
+| `docker-compose.media-fetcher.yml` | phase-2-adapted | Production-style fetcher overlay (radio fail-closed without it) | Documents MEDIA_FETCHER_IMAGE / GHCR pull path |
 | `docs/agents/pr601-architecture-review.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/internal/discord-isolated-integration-4b.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
-| `docs/internal/discord-slash-command-registration.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
+| `docs/internal/discord-slash-command-registration.md` | phase-2-adapted | Commands/Radio operator or internal docs | Production app checklist + prod guild-bind dry-run; no live apply |
 | `docs/internal/plans/2026-11-05-commands-radio-full-registry-matrix.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
-| `docs/internal/plans/2026-11-05-commands-radio-release-strategy.md` | adapted | Commands/Radio operator or internal docs | Noted Path A cut branch + tip; #601 untouched |
+| `docs/internal/plans/2026-11-05-commands-radio-release-strategy.md` | phase-2-adapted | Commands/Radio operator or internal docs | Path A cut = Draft #658; Phase 2 status; merge still blocked pending release GO |
 | `docs/internal/plans/2026-11-05-commands-radio-supervised-live-plan.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/internal/plans/2026-11-05-pr601-ci-disposition.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/internal/plans/discord-commands-media-proposal.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
@@ -183,10 +183,10 @@
 | `docs/public/index.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/public/installation.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/public/music-bots.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
-| `docs/public/radio-fetcher.md` | unchanged-from-integration | Operator docs for fetcher |  |
+| `docs/public/radio-fetcher.md` | phase-2-adapted | Operator docs for fetcher | Deploy matrix + Landlock ABI>=4 + fail-closed; GHCR image tag |
 | `docs/public/security.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
 | `docs/public/troubleshooting.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
-| `docs/public/upgrading.md` | unchanged-from-integration | Commands/Radio operator or internal docs |  |
+| `docs/public/upgrading.md` | phase-2-adapted | Commands/Radio operator or internal docs | nameKey finalise path + backup/restore/rollback; radio fetcher breaking note |
 | `packages/backend/prisma/migrations/20261103000000_playlist_name_key/02_constraints.sql` | unchanged-from-integration | Schema/migrations for bindings + playlist name key |  |
 | `packages/backend/prisma/migrations/20261103000000_playlist_name_key/migration.sql` | unchanged-from-integration | Schema/migrations for bindings + playlist name key |  |
 | `packages/backend/prisma/migrations/20261103120000_discord_guild_binding/migration.sql` | unchanged-from-integration | Schema/migrations for bindings + playlist name key |  |
@@ -282,7 +282,7 @@
 | `packages/backend/src/voice/commands/music-command-handler.ts` | unchanged-from-integration | Shared voice/music/radio behaviour for Commands & Radio |  |
 | `packages/backend/src/voice/commands/playback.ts` | unchanged-from-integration | Shared voice/music/radio behaviour for Commands & Radio |  |
 | `packages/backend/src/voice/commands/playlist-name.sqlite.test.ts` | unchanged-from-integration | Scoped playlist name uniqueness used by commands/library |  |
-| `packages/backend/src/voice/commands/playlist-name.ts` | unchanged-from-integration | Scoped playlist name uniqueness used by commands/library |  |
+| `packages/backend/src/voice/commands/playlist-name.ts` | phase-2-adapted | Scoped playlist name uniqueness used by commands/library | previewPlaylistNameKeyMigration + finalize companion for db push |
 | `packages/backend/src/voice/commands/queue.ts` | unchanged-from-integration | Shared voice/music/radio behaviour for Commands & Radio |  |
 | `packages/backend/src/voice/egress/egress-policy.parity.test.ts` | unchanged-from-integration | Radio/media egress + fetcher client + SSRF policy |  |
 | `packages/backend/src/voice/egress/egress-policy.test.ts` | unchanged-from-integration | Radio/media egress + fetcher client + SSRF policy |  |
@@ -310,7 +310,19 @@
 | `packages/common/src/constants/chat-commands.ts` | unchanged-from-integration | Shared constants/types for commands/audit |  |
 | `packages/common/src/types/audit.ts` | unchanged-from-integration | Command audit types/UI label |  |
 | `packages/frontend/src/pages/AuditHistory.tsx` | unchanged-from-integration | Audit history label for Discord command events |  |
-| `pnpm-workspace.yaml` | net-zero vs main | N/A (checked out then restored) | Integration had `!packages/discord-bridge`; Path A keeps main `packages/*` only |
+| `.gitleaksignore` | path-a-ci | CI adaptation | Fingerprints for superseded hex fixtures in `988c057d`; tip uses placeholders |
+| `.github/workflows/publish-images.yml` | phase-2-adapted | Release publish | Adds media-fetcher to release image matrix / promote / Hub packages |
+| `docker-commands/apply-schema.sh` | phase-2-adapted | Schema startup | Runs nameKey finalize after `db push`; refuses conflicts without recording schema version |
+| `packages/backend/prisma/SCHEMA_VERSION` | phase-2-adapted | Schema startup | Bumped for playlist nameKey finalisation marker |
+| `packages/backend/src/discord-command/prod-db-target.test.ts` | phase-2-new | Production guild-bind | Allowlist tests; no allow-any bypass |
+| `packages/backend/src/discord-command/prod-db-target.ts` | phase-2-new | Production guild-bind | Explicit `ts6webui.db` allowlist |
+| `packages/backend/src/discord-command/prod-guild-bind-cli.ts` | phase-2-new | Production guild-bind | Preview/confirm/audit CLI separate from isolated-db tooling |
+| `packages/backend/src/discord-command/prod-guild-bind.test.ts` | phase-2-new | Production guild-bind | Disposable DB bind/revoke tests |
+| `packages/backend/src/discord-command/prod-guild-bind.ts` | phase-2-new | Production guild-bind | Operator + app/guild verification; preview before write |
+| `packages/backend/src/voice/commands/playlist-namekey-finalize-cli.ts` | phase-2-new | nameKey migration | Preview/confirm finalize used by apply-schema |
+| `packages/backend/src/voice/commands/playlist-namekey-startup.test.ts` | phase-2-new | nameKey migration | Legacy-copy + duplicate-refuse + restart idempotence |
+| `scripts/ci/prerelease-guards.sh` | phase-2-adapted | Release publish | Includes media-fetcher in component allowlist |
+| `pnpm-workspace.yaml` | net-zero vs main | N/A (identical to origin/main) | Integration had `!packages/discord-bridge`; Path A keeps main `packages/*` only — not a changed PR path |
 | `scripts/ci/repo-hygiene.sh` | unchanged-from-integration | Compose hygiene for media-fetcher overlay |  |
 | `scripts/discord-int-media-fetcher-compose.sh` | unchanged-from-integration | INT media-fetcher helpers |  |
 | `scripts/discord-int-media-fetcher-ipc-check.sh` | unchanged-from-integration | INT media-fetcher helpers |  |
@@ -358,3 +370,11 @@
 
 - Replaced gitleaks-flagged hex fixture tokens in `media-fetcher-client.test.ts`, `validate-local.sh`, and `token.test.mjs` with obvious `ts6-*-token-*` placeholders (behaviour unchanged; Path A introduces these lines as a new commit vs main).
 - Added `.gitleaksignore` fingerprints for the superseded hex fixtures in commit `988c057d` (tip uses non-secret placeholders).
+
+## Phase 2 additions (Draft #658)
+
+- Playlist `nameKey`: `db push` + finalize CLI wired in `apply-schema.sh`; conflicts refuse without destructive changes; schema version recorded only after success.
+- Production guild-bind CLI (`prod-guild-bind*`) with basename allowlist `ts6webui.db` only — no `--allow-any-database`.
+- Discord ops: dry-run slash preview / compare docs; production app checklist; interactions enable/disable via env latch. No live production Discord changes in this PR.
+- media-fetcher included in `publish-images.yml` + prerelease guards; operator deploy matrix in `docs/public/radio-fetcher.md`.
+- Evidence preserved: 21/21 command acceptance + sustained audible playback (INT); natural EOF remains unit-only caveat; `/ts bridge` honest-unavailable without D1 worker.

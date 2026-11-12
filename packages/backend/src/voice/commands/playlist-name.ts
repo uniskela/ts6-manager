@@ -366,3 +366,37 @@ export async function finalizePlaylistNameKeyMigration(db: NameLookupDb): Promis
   await applyPlaylistNameKeyConstraints(db);
   return { backfilled };
 }
+
+/**
+ * Non-destructive preview: projects JS nameKeys and reports conflicts.
+ * Does not write nameKey values or install constraints.
+ */
+export async function previewPlaylistNameKeyMigration(db: NameLookupDb): Promise<{
+  playlistCount: number;
+  wouldBackfill: number;
+  constraintsReady: boolean;
+  conflicts: PlaylistNameConflictRow[];
+  report: string;
+}> {
+  const rows = await db.playlist.findMany({
+    where: { id: { gte: 0 } },
+    select: { id: true, name: true, serverConfigId: true, nameKey: true },
+  });
+  const projected = rows.map((row) => ({
+    ...row,
+    nameKey: normalizePlaylistNameKey(row.name),
+  }));
+  const wouldBackfill = rows.filter(
+    (row) => (row.nameKey ?? '') !== normalizePlaylistNameKey(row.name),
+  ).length;
+  const conflicts = collectPlaylistNameConflicts(projected);
+  const constraintsReady = await playlistNameKeyConstraintsReady(db);
+  return {
+    playlistCount: rows.length,
+    wouldBackfill,
+    constraintsReady,
+    conflicts,
+    report: formatPlaylistNameConflictReport(conflicts),
+  };
+}
+

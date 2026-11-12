@@ -84,3 +84,43 @@ Dry-run reports create / update / unchanged / collisions / unrelated. Unrelated 
 - Do not set production guild IDs in local apply experiments.
 - Do not use bulk overwrite (`PUT` all commands) — this client does not implement it.
 - Do not register at backend startup; registration is operator-invoked only.
+
+## Production application checklist (dry-run only until authorised)
+
+Use a **dedicated** Discord application for production Commands & Radio. Do not reuse the INT-TEST app.
+
+1. Create the application in the Discord developer portal (or reuse an approved production app).
+2. Set the Interactions Endpoint URL only after TLS is ready; keep `DISCORD_INTERACTIONS_ENABLED` off until dual-latch checks pass.
+3. Install the bot in the target guild with `applications.commands`.
+4. Dry-run guild registration (never global):
+
+```bash
+node --import tsx src/discord-command/slash-register-cli.ts \
+  --application-id "$DISCORD_APPLICATION_ID" \
+  --guild-id "$GUILD_ID" \
+  --fetch-remote
+```
+
+5. Compare create/update/unchanged/collisions. Resolve collisions before any apply.
+6. Guild bind with the **production** CLI (allowlisted `ts6webui.db` only; preview then `--confirm-write`):
+
+```bash
+node --import tsx src/discord-command/prod-guild-bind-cli.ts preview-bind \
+  --database-url "file:./data/ts6webui.db" \
+  --operator "$OPERATOR_ID" \
+  --application-id "$DISCORD_APPLICATION_ID" \
+  --guild-id "$GUILD_ID" \
+  --instance-id "$INSTANCE_ID" \
+  --server-config-id "$SERVER_ID" \
+  --music-bot-id "$BOT_ID"
+```
+
+7. Enable interactions only with an explicit operator change to env + restart. Disable by clearing `DISCORD_INTERACTIONS_ENABLED` (or setting it false) and restarting.
+
+**Hard rules:** no global slash registration; no apply without preview; no `--allow-any-database` on the production guild-bind path; `/ts bridge` stays honest-unavailable without a D1 worker/status source.
+
+## Known product limitations (announce honestly)
+
+- Discord users do not have TeamSpeak identities — media-group rules that expect a TS uid will not treat Discord as “everyone”.
+- Full-source radio EOF drain is unit-tested and sustained playback was accepted in INT; natural end-of-stream live proof is still a known limitation.
+- `/ts bridge` without a bridge worker reports unavailable (by design on Path A).

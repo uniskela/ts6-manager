@@ -15,13 +15,13 @@ Ship the Commands & Radio surface **without** unfinished D1 bridge feasibility.
 | Automated Commands suites | PASS post-main-merge |
 | INT-TEST guild registration (non-global) | Creates applied; `/play` `/queue` `/stop` preserved |
 | Stage F live (`/play` `/queue` `/stop`) | PASS (prior session) |
-| Full-registry supervised live | **Blocking** — one consolidated operator session |
+| Full-registry supervised live | **PASS** (21/21 preserved) |
 | Production Discord app / global registration | Must stay off |
 | D1 worker / DAVE hear-tests | Not required for Path A |
 
 **How to cut Path A later:** cherry-pick or open a Commands-only branch from `9b1ea8b`+follow-ups **excluding** `packages/discord-bridge` D1 feasibility and unfinished bridge pilot wiring, after full-registry live PASS. This integration branch is intentionally combined and is **not** that cut.
 
-**Blocks Path A today:** consolidated supervised live for remaining commands; production registration/ops checklist; no production app changes until approved.
+**Path A cut:** Draft PR #658 (`release/commands-radio`). Phase 2 adds prod guild-bind, nameKey finalisation on startup, fetcher publish, and ops docs. **Still blocked for merge:** production Discord app/registration GO, operator DB backup checklist, independent release GO. No production app changes until approved.
 
 ## Path B — Combined D1 + Commands & Radio
 

@@ -199,10 +199,26 @@ For an existing persistent database the startup path:
 
 1. checks the schema-version marker;
 2. applies the current Prisma schema with `prisma db push`;
-3. seeds required data when needed; and
-4. records the current schema version.
+3. **finalises playlist `nameKey` uniqueness** (JS backfill → conflict preflight → partial unique indexes and triggers);
+4. seeds required data when needed; and
+5. records the current schema version only after step 3 succeeds.
 
-A normal Docker upgrade does not require a separate manual migration command.
+`prisma db push` alone cannot install the playlist uniqueness rules (they are partial SQLite indexes and cross-namespace triggers). The finalisation step never renames, merges, or deletes playlists. If two playlists would share a normalised name in the same scope, finalisation **refuses**, the schema version is **not** recorded, and the backend does not start — so the next restart retries after you fix the duplicates (or restore a backup).
+
+Preview without writing constraints (from `packages/backend`, with `DATABASE_URL` set):
+
+```bash
+node --import tsx src/voice/commands/playlist-namekey-finalize-cli.ts --preview
+```
+
+### Backup, restore, and rollback (schema)
+
+1. **Backup** before upgrading: stop the backend, then copy `ts6webui.db` plus any `-wal`/`-shm` journal files and the data volume.
+2. **Upgrade** with the new image (apply-schema runs automatically).
+3. **If nameKey finalisation fails:** read the conflict report in the `[nameKey]` / `[schema]` logs. Resolve duplicate playlist names in a **copy** of the database first, or restore the backup and stay on the previous image until duplicates are cleaned.
+4. **Rollback** always means previous image tag **and** matching database backup. Do not point an older image at a database that already received newer columns without restoring the backup.
+
+A normal Docker upgrade still does not require a separate manual SQL migration when the database is conflict-free.
 
 ## TeamSpeak credentials after upgrade
 

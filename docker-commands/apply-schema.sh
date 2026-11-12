@@ -59,6 +59,30 @@ echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
 # after `exec node dist/index.js`, ends as a zombie under the backend (#466).
 CHECKPOINT_DISABLE=1 node "$PRISMA_CLI" db push --skip-generate
 
+# Playlist nameKey uniqueness is not expressible as Prisma @@unique (partial
+# indexes + cross-namespace triggers). db push only adds the column/index.
+# Finalise after push: JS backfill → conflict preflight → constraints.
+# Conflicts refuse finalisation without renaming/deleting playlists; schema
+# version is not recorded so the next start retries after the operator fixes
+# duplicates (restore backup if needed).
+NAMEKEY_CLI=""
+if [ -f "$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js"
+elif [ -f "$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts"
+fi
+if [ -n "$NAMEKEY_CLI" ]; then
+  echo "[schema] Finalising playlist nameKey uniqueness"
+  if [ "${NAMEKEY_CLI%.ts}" != "$NAMEKEY_CLI" ]; then
+    node --import tsx "$NAMEKEY_CLI" --confirm-finalize
+  else
+    node "$NAMEKEY_CLI" --confirm-finalize
+  fi
+else
+  echo "[schema] playlist-namekey-finalize-cli missing" >&2
+  exit 1
+fi
+
 # Seed is safe to re-run (script uses upsert / ignores existing values).
 if node prisma/seed.mjs; then
   echo "[schema] Seed completed"
