@@ -126,6 +126,8 @@ export function classifyDiscordRawBodyError(err: unknown): 400 | 413 | 415 | nul
     message?: string;
     expose?: boolean;
   };
+  // Client closed mid-upload: body-parser emits type request.aborted (status 400).
+  if (e.type === 'request.aborted') return 400;
   const status = e.status ?? e.statusCode;
   if (status === 413 || e.type === 'entity.too.large' || e.name === 'PayloadTooLargeError') return 413;
   if (status === 415 || e.type === 'encoding.unsupported' || e.name === 'UnsupportedMediaTypeError') return 415;
@@ -150,21 +152,60 @@ export function classifyDiscordRawBodyError(err: unknown): 400 | 413 | 415 | nul
   return null;
 }
 
+function clientConnectionClosed(req: Request, res: Response): boolean {
+  return Boolean(
+    // Express/Node mark aborted uploads; writing would throw after destroy.
+    // Do not use !res.writable — inflate failures can clear it while the client waits.
+    (req as Request & { aborted?: boolean }).aborted
+    || req.destroyed
+    || res.writableEnded
+    || res.destroyed,
+  );
+}
+
+/** Stamped before express.raw — aborts clear socket.remoteAddress before the error path. */
+const CLIENT_KEY_PROP = Symbol.for('ts6.discord.clientRateKey');
+
+type RequestWithClientKey = Request & { [CLIENT_KEY_PROP]?: string };
+
+function stampClientKey(req: Request, gates: DiscordInteractionRateGates | null | undefined): string {
+  const keyed = req as RequestWithClientKey;
+  const existing = keyed[CLIENT_KEY_PROP];
+  if (typeof existing === 'string' && existing.length > 0) return existing;
+  const key = gates ? gates.clientKey(req) : 'unknown';
+  keyed[CLIENT_KEY_PROP] = key;
+  return key;
+}
+
 function refuseUnauthenticatedBodyParser(
   req: Request,
   res: Response,
   deps: Pick<DiscordInteractionsHttpDeps, 'rateGates'>,
   status: 400 | 413 | 415,
+  err: unknown,
 ): void {
   const gates = deps.rateGates ?? null;
+  let limited = false;
   if (gates) {
-    const key = gates.clientKey(req);
-    if (!gates.takeUnauthenticated(key)) {
+    // Charge exactly once per parser failure, including request.aborted.
+    // Use the pre-parse stamp: destroy() clears remoteAddress before this runs.
+    const key = stampClientKey(req, gates);
+    if (!gates.takeUnauthenticated(key)) limited = true;
+  }
+  // request.aborted: client usually gone — charge above, skip write if socket closed.
+  // Other parser failures (413/415/inflate) still need a status; body-parser may mark
+  // the req destroyed even while the client awaits a response.
+  const errType = err && typeof err === 'object' ? String((err as { type?: unknown }).type ?? '') : '';
+  if (errType === 'request.aborted' && clientConnectionClosed(req, res)) return;
+  try {
+    if (limited) {
       sendOnce(res, 429, RATE_LIMITED);
       return;
     }
+    sendOnce(res, status, BODY_PARSER_RESPONSE[status]);
+  } catch {
+    // Client gone mid-write — quota already charged.
   }
-  sendOnce(res, status, BODY_PARSER_RESPONSE[status]);
 }
 
 /**
@@ -179,6 +220,11 @@ export function createDiscordInteractionsRouter(deps: DiscordInteractionsHttpDep
   const router = Router();
   router.post(
     '/',
+    // Capture peer while the socket is still connected (request.aborted clears it).
+    (req: Request, _res: Response, next: NextFunction) => {
+      stampClientKey(req, deps.rateGates);
+      next();
+    },
     express.raw({ type: '*/*', limit: '256kb' }),
     (req: Request, res: Response, next: NextFunction) => {
       void handleInteraction(req, res, deps).catch((err) => {
@@ -200,7 +246,7 @@ export function createDiscordInteractionsRouter(deps: DiscordInteractionsHttpDep
       next(err);
       return;
     }
-    refuseUnauthenticatedBodyParser(req, res, deps, status);
+    refuseUnauthenticatedBodyParser(req, res, deps, status, err);
   });
   return router;
 }
@@ -240,7 +286,7 @@ async function handleInteraction(
   const nowMs = deps.nowMs?.() ?? Date.now();
   const maxAgeMs = deps.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
   const gates = deps.rateGates ?? null;
-  const clientKey = gates ? gates.clientKey(req) : '';
+  const clientKey = gates ? stampClientKey(req, gates) : '';
 
   const refuseUnauth = (status: number, payload: unknown): void => {
     if (gates && !gates.takeUnauthenticated(clientKey)) {

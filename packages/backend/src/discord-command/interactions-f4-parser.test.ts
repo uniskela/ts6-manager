@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { once } from 'node:events';
+import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,10 +13,19 @@ import { after, before, describe, it } from 'node:test';
 import type { Express } from 'express';
 import { config } from '../config.js';
 import { MemoryDiscordFollowUp } from './follow-up.js';
+import { classifyDiscordRawBodyError } from './interactions-http.js';
 
 const TIMESTAMP = '1700000000';
 const APP_ID = '999000000000000001';
 const GUILD = '111';
+const CLIENT_KEY = 'ipv4:127.0.0.1';
+
+type HitStore = {
+  limit: number;
+  size: number;
+  get: (key: string) => { totalHits: number } | undefined;
+  increment: (key: string) => { totalHits: number };
+};
 
 function ed25519() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -91,8 +101,8 @@ async function createDiscordApp(opts: {
     app,
     handled,
     port: address.port,
-    unauth: app.locals.discordInteractionsUnauthRateLimitStore as { limit: number; increment: (k: string) => { totalHits: number } },
-    auth: app.locals.discordInteractionsAuthRateLimitStore as { limit: number; size: number },
+    unauth: app.locals.discordInteractionsUnauthRateLimitStore as HitStore,
+    auth: app.locals.discordInteractionsAuthRateLimitStore as HitStore,
     async close() {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
@@ -100,6 +110,48 @@ async function createDiscordApp(opts: {
       });
     },
   };
+}
+
+async function waitForUnauthHits(store: HitStore, minHits: number, deadlineMs = 15_000): Promise<number> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const hits = store.get(CLIENT_KEY)?.totalHits ?? 0;
+    if (hits >= minHits) return hits;
+    // Yield to timers/I/O — a setImmediate spin starves the abort error path.
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${minHits} unauth hits (have ${store.get(CLIENT_KEY)?.totalHits ?? 0})`);
+}
+
+/** Start a POST, send a short prefix, then destroy before Content-Length is satisfied. */
+function abortPartialUpload(port: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/discord/interactions',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': String(64 * 1024),
+        'x-signature-ed25519': 'ab'.repeat(64),
+        'x-signature-timestamp': TIMESTAMP,
+      },
+    });
+    req.on('error', done);
+    req.on('close', done);
+    req.write(Buffer.alloc(128, 0x61));
+    // Yield so headers/body reach express.raw before destroy (emits request.aborted).
+    setTimeout(() => {
+      req.destroy();
+    }, 20);
+  });
 }
 
 async function postRaw(
@@ -156,6 +208,12 @@ function gzipCorrupt(): Buffer {
 }
 
 describe('F4 createApp raw-body parser rate limiting', () => {
+  it('classifies request.aborted as an expected raw-body failure', () => {
+    assert.equal(classifyDiscordRawBodyError({ type: 'request.aborted', status: 400 }), 400);
+    assert.equal(classifyDiscordRawBodyError({ type: 'request.aborted', statusCode: 400 }), 400);
+    assert.equal(classifyDiscordRawBodyError({ type: 'something.else', status: 500 }), null);
+  });
+
   it('A: oversized bodies return 413 then 429 without 500s, side effects, or error logs', async () => {
     const keys = ed25519();
     const handled = { count: 0 };
@@ -174,6 +232,10 @@ describe('F4 createApp raw-body parser rate limiting', () => {
       assert.equal(handled.count, 0);
       assert.equal(log.lines.filter((l) => l.includes('[Error')).length, 0, log.lines.join('\n'));
       assert.equal(f.auth.size, 0);
+      const sample = await postRaw(f.port, { body: huge, signatureHex: 'ab'.repeat(64) });
+      assert.ok(sample.status === 429 || sample.status === 413);
+      assert.equal(typeof (sample.body as { error?: unknown }).error, 'string');
+      assert.ok(!JSON.stringify(sample.body).includes('stack'));
     } finally {
       log.restore();
       await f.close();
@@ -261,6 +323,46 @@ describe('F4 createApp raw-body parser rate limiting', () => {
       assert.equal(handled.count, 1);
       assert.ok(f.auth.size >= 1);
     } finally {
+      await f.close();
+    }
+  });
+
+  it('F4-R1: aborted uploads consume unauth quota without error logs; signed commands still work', async () => {
+    const keys = ed25519();
+    const handled = { count: 0 };
+    const f = await createDiscordApp({ publicKeyHex: keys.publicKeyHex, handled });
+    const log = captureConsoleErrors();
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    try {
+      const target = f.unauth.limit + 10;
+      for (let i = 1; i <= target; i++) {
+        await abortPartialUpload(f.port);
+        await waitForUnauthHits(f.unauth, i);
+      }
+      assert.ok((f.unauth.get(CLIENT_KEY)?.totalHits ?? 0) >= f.unauth.limit + 10);
+      assert.equal(f.auth.size, 0);
+      assert.equal(handled.count, 0);
+      assert.equal(log.lines.filter((l) => l.includes('[Error')).length, 0, log.lines.join('\n'));
+
+      // Socket still open: further unauthenticated traffic is 429.
+      const limited = await postRaw(f.port, {
+        body: commandBody('ix-after-abort-flood'),
+        signatureHex: 'cd'.repeat(64),
+        timestamp,
+      });
+      assert.equal(limited.status, 429);
+
+      const body = commandBody('ix-signed-after-abort-flood');
+      const signed = await postRaw(f.port, {
+        body,
+        signatureHex: keys.sign(timestamp, body),
+        timestamp,
+      });
+      assert.equal(signed.status, 200, JSON.stringify(signed.body));
+      assert.equal(handled.count, 1);
+      assert.ok((f.auth.get(CLIENT_KEY)?.totalHits ?? 0) >= 1);
+    } finally {
+      log.restore();
       await f.close();
     }
   });
