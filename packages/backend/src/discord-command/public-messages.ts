@@ -4,13 +4,17 @@ import {
   MEDIA_LINK_UNAVAILABLE,
   MediaEgressError,
 } from '../voice/egress/media-egress.js';
-import { RADIO_FETCHER_UNAVAILABLE } from '../voice/egress/media-fetcher-client.js';
+import {
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+} from '../voice/egress/media-fetcher-client.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
 import { QueueFullError } from '../voice/playlist/queue.js';
 
 /** Stable MediaEgressError texts safe to show in Discord/TeamSpeak replies. */
 const SAFE_MEDIA_EGRESS_MESSAGES = new Set([
   RADIO_FETCHER_UNAVAILABLE,
+  RADIO_FETCHER_BUSY,
   MEDIA_LINK_UNAVAILABLE,
   MEDIA_EGRESS_OFF_REFUSAL,
 ]);

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { MediaEgressError } from '../voice/egress/media-egress.js';
-import { RADIO_FETCHER_UNAVAILABLE } from '../voice/egress/media-fetcher-client.js';
+import {
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+} from '../voice/egress/media-fetcher-client.js';
 import { defaultMediaCommandPermissions, type MediaCommandPermissions } from '../voice/media-command-permissions.js';
 import { safeUrlDisplayTitle } from '../voice/media-session.js';
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
@@ -729,6 +732,21 @@ describe('Discord playlist and radio catalog (2B-2A)', () => {
     assert.equal(result.ok, false);
     assert.equal(result.content, RADIO_FETCHER_UNAVAILABLE);
     assert.doesNotMatch(result.content, /Radio playback failed/);
+  });
+
+  it('F5: radio play returns distinct capacity message when fetcher is busy', async () => {
+    const bot = fakeBot();
+    bot.playStream = async () => {
+      throw new MediaEgressError(RADIO_FETCHER_BUSY);
+    };
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const result = await music.execute(musicIntent({
+      command: 'radio', args: { subcommand: 'play', station: 'Jazz FM' },
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.equal(result.content, RADIO_FETCHER_BUSY);
+    assert.notEqual(result.content, RADIO_FETCHER_UNAVAILABLE);
+    assert.doesNotMatch(result.content, /isolated media fetcher/);
   });
 
   it('does not enqueue a playlist loaded after /stop', async () => {

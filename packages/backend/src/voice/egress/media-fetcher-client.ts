@@ -12,6 +12,15 @@ export const RADIO_FETCHER_UNAVAILABLE =
 
 export const MEDIA_FETCHER_UNAVAILABLE = RADIO_FETCHER_UNAVAILABLE;
 
+/**
+ * Fetcher accepted the connection but refused a new job because FETCHER_MAX_JOBS
+ * concurrent jobs are already running. Temporary — not a missing overlay.
+ */
+export const RADIO_FETCHER_BUSY =
+  'Radio playback is temporarily at capacity. Try again in a moment.';
+
+export const MEDIA_FETCHER_BUSY = RADIO_FETCHER_BUSY;
+
 /** Bound connect wait for the job socket. */
 export const MEDIA_FETCHER_CONNECT_TIMEOUT_MS = 3_000;
 /** Bound wait for the submit/header JSON line (before audio). */
@@ -23,6 +32,17 @@ export const MEDIA_FETCHER_STDOUT_HIGH_WATER_MARK = 256 * 1024;
 
 function fetcherUnavailable(): MediaEgressError {
   return new MediaEgressError(RADIO_FETCHER_UNAVAILABLE);
+}
+
+function fetcherBusy(): MediaEgressError {
+  return new MediaEgressError(RADIO_FETCHER_BUSY);
+}
+
+/** Map a refused job header to a stable MediaEgressError (no retries). */
+function refuseJobHeader(header: Record<string, unknown>): MediaEgressError {
+  if (header.error === 'busy') return fetcherBusy();
+  // unauthorized, denied, proxy-unavailable, malformed, unknown → fail closed
+  return fetcherUnavailable();
 }
 
 function readToken(env: NodeJS.ProcessEnv = process.env): string {
@@ -182,7 +202,7 @@ export async function submitMediaFetch(
 
   if (!header.ok) {
     socket.destroy();
-    throw fetcherUnavailable();
+    throw refuseJobHeader(header);
   }
   jobId = String(header.jobId ?? '');
   if (buf.length) {

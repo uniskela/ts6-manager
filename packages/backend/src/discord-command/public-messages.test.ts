@@ -6,7 +6,10 @@ import {
   MEDIA_LINK_UNAVAILABLE,
   MediaEgressError,
 } from '../voice/egress/media-egress.js';
-import { RADIO_FETCHER_UNAVAILABLE } from '../voice/egress/media-fetcher-client.js';
+import {
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+} from '../voice/egress/media-fetcher-client.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
 import { QueueFullError } from '../voice/playlist/queue.js';
 import { publicCommandError } from './public-messages.js';
@@ -30,6 +33,10 @@ describe('publicCommandError (finding #9)', () => {
     assert.equal(
       publicCommandError(new MediaEgressError(RADIO_FETCHER_UNAVAILABLE), 'Radio playback failed.'),
       RADIO_FETCHER_UNAVAILABLE,
+    );
+    assert.equal(
+      publicCommandError(new MediaEgressError(RADIO_FETCHER_BUSY), 'Radio playback failed.'),
+      RADIO_FETCHER_BUSY,
     );
     assert.equal(
       publicCommandError(new MediaEgressError(MEDIA_LINK_UNAVAILABLE), 'Radio playback failed.'),

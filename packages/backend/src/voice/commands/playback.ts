@@ -76,7 +76,14 @@ export async function handleRadio(
 
   request.accept();
   if (!isCurrent()) return;
-  await bot.playStream(queueItem, context.chatMusicSwitch(bot));
+  try {
+    await bot.playStream(queueItem, context.chatMusicSwitch(bot));
+  } catch (err: any) {
+    if (!isCurrent()) return;
+    // MediaEgressError texts (busy / unavailable) are crafted for chat.
+    context.reply(bot, userClid, `Failed to play: ${err.message}`);
+    return;
+  }
   if (!isCurrent() || bot.nowPlaying !== queueItem) {
     if (bot.nowPlaying === queueItem) bot.stopAudio({ keepPendingRequests: true });
     return;

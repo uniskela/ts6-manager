@@ -6,7 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it, mock } from 'node:test';
 import { MediaEgressError } from './media-egress.js';
-import { RADIO_FETCHER_UNAVAILABLE, submitMediaFetch } from './media-fetcher-client.js';
+import {
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+  submitMediaFetch,
+} from './media-fetcher-client.js';
 
 const saved = {
   flag: process.env.MEDIA_FETCHER,
@@ -27,6 +31,25 @@ afterEach(() => {
 
 function isUnavailable(err: unknown): boolean {
   return err instanceof MediaEgressError && err.message === RADIO_FETCHER_UNAVAILABLE;
+}
+
+function isBusy(err: unknown): boolean {
+  return err instanceof MediaEgressError && err.message === RADIO_FETCHER_BUSY;
+}
+
+function withTokenSocket(
+  label: string,
+  onClient: (client: net.Socket) => void,
+): Promise<{ dir: string; sockPath: string; token: string; server: net.Server }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), label));
+  const sockPath = path.join(dir, 'jobs.sock');
+  const token = path.join(dir, 'token');
+  fs.writeFileSync(token, 'ts6-fetcher-test-token-xxxxxxxx', { mode: 0o600 });
+  const server = net.createServer(onClient);
+  return new Promise((resolve, reject) => {
+    server.listen(sockPath, () => resolve({ dir, sockPath, token, server }));
+    server.once('error', reject);
+  });
 }
 
 describe('submitMediaFetch', () => {
@@ -132,19 +155,11 @@ describe('submitMediaFetch', () => {
   });
 
   it('fails closed when the fetcher refuses the job', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-no-'));
-    const sockPath = path.join(dir, 'jobs.sock');
-    const token = path.join(dir, 'token');
-    fs.writeFileSync(token, 'ts6-fetcher-test-token-xxxxxxxx', { mode: 0o600 });
-    const server = net.createServer((client) => {
+    const { dir, sockPath, token, server } = await withTokenSocket('ts6-fetch-no-', (client) => {
       client.once('data', () => {
         client.write(`${JSON.stringify({ ok: false, error: 'denied' })}\n`);
         client.end();
       });
-    });
-    await new Promise<void>((resolve, reject) => {
-      server.listen(sockPath, resolve);
-      server.once('error', reject);
     });
     try {
       await assert.rejects(
@@ -154,6 +169,113 @@ describe('submitMediaFetch', () => {
         }),
         isUnavailable,
       );
+    } finally {
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('maps capacity exhaustion (busy) to a distinct temporary message, not unavailable', async () => {
+    let submits = 0;
+    const { dir, sockPath, token, server } = await withTokenSocket('ts6-fetch-busy-', (client) => {
+      client.once('data', () => {
+        submits += 1;
+        client.write(`${JSON.stringify({ ok: false, error: 'busy' })}\n`);
+        client.end();
+      });
+    });
+    const spawn = mock.method(childProcess, 'spawn', () => {
+      throw new Error('must not spawn');
+    });
+    try {
+      await assert.rejects(
+        () => submitMediaFetch('https://203.0.113.10/live', {
+          MEDIA_FETCHER_SOCK: sockPath,
+          MEDIA_FETCHER_TOKEN_FILE: token,
+        }),
+        isBusy,
+      );
+      assert.equal(submits, 1);
+      assert.equal(spawn.mock.calls.length, 0);
+      assert.notEqual(RADIO_FETCHER_BUSY, RADIO_FETCHER_UNAVAILABLE);
+    } finally {
+      spawn.mock.restore();
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps auth refusals and malformed headers fail-closed as unavailable', async () => {
+    for (const payload of [
+      { ok: false, error: 'unauthorized' },
+      { ok: false, error: 'proxy-unavailable' },
+      { ok: false, error: 'weird-new-code' },
+      { ok: false },
+      { ok: false, error: 42 },
+      'not-json\n',
+    ]) {
+      const { dir, sockPath, token, server } = await withTokenSocket('ts6-fetch-bad-', (client) => {
+        client.once('data', () => {
+          if (typeof payload === 'string') client.write(payload);
+          else client.write(`${JSON.stringify(payload)}\n`);
+          client.end();
+        });
+      });
+      try {
+        await assert.rejects(
+          () => submitMediaFetch('https://203.0.113.10/live', {
+            MEDIA_FETCHER_SOCK: sockPath,
+            MEDIA_FETCHER_TOKEN_FILE: token,
+          }),
+          isUnavailable,
+        );
+      } finally {
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('does not start a stream job when busy, then recovers when capacity frees', async () => {
+    let phase: 'full' | 'free' = 'full';
+    let accepted = 0;
+    const { dir, sockPath, token, server } = await withTokenSocket('ts6-fetch-recover-', (client) => {
+      client.once('data', () => {
+        if (phase === 'full') {
+          client.write(`${JSON.stringify({ ok: false, error: 'busy' })}\n`);
+          client.end();
+          return;
+        }
+        accepted += 1;
+        client.write(`${JSON.stringify({ ok: true, jobId: 'j-recover' })}\n`);
+        client.write(Buffer.from('pcm-ok'));
+        client.end();
+      });
+    });
+    try {
+      await assert.rejects(
+        () => submitMediaFetch('https://203.0.113.10/live', {
+          MEDIA_FETCHER_SOCK: sockPath,
+          MEDIA_FETCHER_TOKEN_FILE: token,
+        }),
+        isBusy,
+      );
+      assert.equal(accepted, 0);
+
+      phase = 'free';
+      const stream = await submitMediaFetch('https://203.0.113.10/live', {
+        MEDIA_FETCHER_SOCK: sockPath,
+        MEDIA_FETCHER_TOKEN_FILE: token,
+      });
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        stream.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.stdout.on('end', () => resolve());
+        stream.stdout.on('error', reject);
+      });
+      assert.equal(accepted, 1);
+      assert.equal(Buffer.concat(chunks).toString(), 'pcm-ok');
+      stream.kill();
     } finally {
       server.close();
       fs.rmSync(dir, { recursive: true, force: true });
