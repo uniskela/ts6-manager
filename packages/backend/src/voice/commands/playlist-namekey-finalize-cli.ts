@@ -23,6 +23,7 @@ import {
   classifySqlitePreflightTarget,
   finalizePlaylistNameKeyMigration,
   formatPlaylistNameKeyCompatibilityReport,
+  inspectTs6PlaylistSchema,
   preflightPlaylistNameKeyCompatibility,
   previewPlaylistNameKeyMigration,
 } from './playlist-name.js';
@@ -122,6 +123,14 @@ async function main(): Promise<void> {
 
   const { prisma, disconnect } = await openPrisma();
   try {
+    // R4-1: existing files without a TS6 Playlist schema must not report compatible=true.
+    // --allow-absent only covers a missing file, never an empty/unrelated existing DB.
+    const schema = await inspectTs6PlaylistSchema(prisma as any);
+    if (schema.kind !== 'ok') {
+      console.error(`[nameKey] ${schema.message}`);
+      process.exit(1);
+    }
+
     if (preview) {
       const result = await previewPlaylistNameKeyMigration(prisma as any);
       printAssessment('preview', result);

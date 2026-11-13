@@ -5,8 +5,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { accessSync, existsSync, writeFileSync } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -681,12 +681,11 @@ describe('F1 R1 DATABASE_URL preflight targeting', () => {
       const pre = runCli(['--preflight', '--allow-absent'], `file:${dbFile}`, { TS6_SCHEMA_DB_FILE: dbFile });
       assert.equal(pre.status, 0, pre.stderr || pre.stdout);
       assert.match(pre.stdout, /fresh install|compatible=true/i);
-      try {
-        accessSync(dbFile);
-        assert.fail('absent preflight must not create the database file');
-      } catch {
-        // expected — file must still be missing
-      }
+      assert.equal(
+        existsSync(dbFile),
+        false,
+        'absent preflight must not create the database file',
+      );
       const applied = runApplySchema(dataDir, dbFile);
       assert.equal(applied.status, 0, applied.stderr || applied.stdout);
     } finally {
@@ -729,6 +728,101 @@ describe('F1 R2-a absent-file operator checks', () => {
       const bad = runCli('--preflight', `file:${path.join(root, 'bad.db')}`);
       assert.notEqual(bad.status, 0);
       assert.match(bad.stdout, /compatible=false/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('F1 R4-1 empty / unrelated database refusal', () => {
+  it('manual checks refuse missing, empty, bare SQLite, unrelated, and corrupt targets', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-r41-'));
+    try {
+      const missing = path.join(root, 'missing.db');
+      for (const flag of ['--preflight', '--preview'] as const) {
+        const r = runCli(flag, `file:${missing}`);
+        assert.notEqual(r.status, 0, flag);
+        assert.match(r.stderr + r.stdout, /not found|not checked/i);
+        assert.equal((r.stdout + r.stderr).includes('compatible=true'), false);
+      }
+      assert.equal(existsSync(missing), false);
+
+      const zero = path.join(root, 'zero.db');
+      writeFileSync(zero, '');
+      const zeroPre = runCli('--preflight', `file:${zero}`);
+      assert.notEqual(zeroPre.status, 0);
+      assert.match(zeroPre.stderr + zeroPre.stdout, /empty file|not a readable SQLite/i);
+      assert.equal((zeroPre.stdout + zeroPre.stderr).includes('compatible=true'), false);
+      assert.equal(existsSync(zero), true);
+      assert.equal((await readFile(zero)).length, 0);
+
+      const bare = path.join(root, 'bare.db');
+      // Valid empty SQLite with no application tables.
+      execFileSync('sqlite3', [bare, 'VACUUM;'], { encoding: 'utf8' });
+      const barePre = runCli('--preflight', `file:${bare}`);
+      assert.notEqual(barePre.status, 0);
+      assert.match(barePre.stderr + barePre.stdout, /Not a TS6 Manager database/i);
+      assert.equal((barePre.stdout + barePre.stderr).includes('compatible=true'), false);
+
+      const unrelated = path.join(root, 'other.db');
+      execFileSync('sqlite3', [unrelated, 'CREATE TABLE widgets(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO widgets(name) VALUES (\'x\');'], { encoding: 'utf8' });
+      const unrelatedPre = runCli('--preflight', `file:${unrelated}`);
+      assert.notEqual(unrelatedPre.status, 0);
+      assert.match(unrelatedPre.stderr + unrelatedPre.stdout, /Not a TS6 Manager database/i);
+      assert.equal((unrelatedPre.stdout + unrelatedPre.stderr).includes('compatible=true'), false);
+
+      const fakePlaylist = path.join(root, 'fake-playlist.db');
+      execFileSync('sqlite3', [fakePlaylist, 'CREATE TABLE Playlist(id INTEGER PRIMARY KEY, title TEXT);'], { encoding: 'utf8' });
+      const fakePre = runCli('--preflight', `file:${fakePlaylist}`);
+      assert.notEqual(fakePre.status, 0);
+      assert.match(fakePre.stderr + fakePre.stdout, /Not a TS6 Manager database/i);
+
+      const corrupt = path.join(root, 'corrupt.db');
+      await writeFile(corrupt, 'this is not sqlite\n');
+      const corruptPre = runCli('--preflight', `file:${corrupt}`);
+      assert.notEqual(corruptPre.status, 0);
+      assert.equal((corruptPre.stdout + corruptPre.stderr).includes('compatible=true'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('TS6 DB with zero playlists is compatible; conflicts still refuse; empty Playlist table is not “not TS6”', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-r41-ok-'));
+    try {
+      const emptyPl = path.join(root, 'empty-playlists.db');
+      await buildLegacyFixture(emptyPl, []);
+      const emptyPre = runCli('--preflight', `file:${emptyPl}`);
+      assert.equal(emptyPre.status, 0, emptyPre.stderr || emptyPre.stdout);
+      assert.match(emptyPre.stdout, /compatible=true/);
+      assert.match(emptyPre.stdout, /playlists=0/);
+
+      const ok = path.join(root, 'ok.db');
+      await buildLegacyFixture(ok, [{ name: 'Solo', serverConfigId: 1 }]);
+      assert.equal(runCli('--preflight', `file:${ok}`).status, 0);
+
+      const bad = path.join(root, 'bad.db');
+      await buildLegacyFixture(bad, [
+        { name: 'Chill', serverConfigId: 1 },
+        { name: 'chill', serverConfigId: 1 },
+      ]);
+      const badPre = runCli('--preflight', `file:${bad}`);
+      assert.notEqual(badPre.status, 0);
+      assert.match(badPre.stdout, /compatible=false/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('--allow-absent does not bypass refusal of an existing empty/unrelated database', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-r41-allow-'));
+    try {
+      const bare = path.join(root, 'bare.db');
+      execFileSync('sqlite3', [bare, 'VACUUM;'], { encoding: 'utf8' });
+      const r = runCli(['--preflight', '--allow-absent'], `file:${bare}`);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr + r.stdout, /Not a TS6 Manager database/i);
+      assert.equal((r.stdout + r.stderr).includes('compatible=true'), false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

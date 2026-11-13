@@ -237,7 +237,21 @@ docker compose -f docker-compose.all-in-one.yml \
 #### Preflight against a copy (recommended, isolated)
 
 1. **Stop** the backend (or all-in-one) so SQLite is quiescent, **or** use SQLite’s online backup API against a running file (preferred over copying a live `*.db` while writers are active).
-2. Produce a consistent copy into a disposable host directory (for example `./db-check/ts6webui.db`). With the app stopped you may copy `ts6webui.db` together with any `ts6webui.db-wal` / `ts6webui.db-shm` beside it. With the app still running, prefer `sqlite3 /path/to/ts6webui.db ".backup './db-check/ts6webui.db'"` so WAL state is folded into one file.
+2. Produce a consistent copy into a disposable host directory. Remove any stale destination first so a failed backup cannot leave an old file behind:
+
+```bash
+mkdir -p ./db-check
+rm -f ./db-check/ts6webui.db
+# -readonly fails if the source path is mistyped (does not create an empty source DB).
+if ! sqlite3 -readonly /path/to/live/ts6webui.db ".backup './db-check/ts6webui.db'"; then
+  rm -f ./db-check/ts6webui.db   # sqlite may leave a zero-byte dest on failure
+  echo "backup failed" >&2
+  exit 1
+fi
+test -s ./db-check/ts6webui.db
+```
+
+With the app fully stopped you may instead copy `ts6webui.db` together with any `ts6webui.db-wal` / `ts6webui.db-shm` beside it.
 3. Run a **standalone** container that mounts **only** that directory read-only. Do not use `docker compose run` here — compose still attaches the production data volume.
 
 Replace the image tag with the backend image that contains this release’s compiled CLI (for example `ghcr.io/uniskela/ts6-manager/backend:<this-release-tag>`):
@@ -257,7 +271,7 @@ Confirm the log line `database=/check/ts6webui.db`. A mistyped mount or missing 
 
 ### Backup, restore, and rollback (schema)
 
-1. **Backup** before upgrading: stop the backend (or use `sqlite3 … ".backup …"`), then keep a consistent copy of `ts6webui.db` (plus `-wal`/`-shm` if you copied files cold) and the data volume.
+1. **Backup** before upgrading: stop the backend (or use `sqlite3 -readonly … ".backup …"` as above), then keep a consistent copy of `ts6webui.db` (plus `-wal`/`-shm` if you copied files cold) and the data volume.
 2. **Upgrade** with the new image (apply-schema runs automatically).
 
 Distinguish these outcomes:
@@ -270,11 +284,19 @@ Distinguish these outcomes:
 
 #### Confirm a refused preflight left the database unchanged
 
-On the live data file (read-only check):
+On the live data file (read-only; a failed query must not be treated as “unchanged”):
 
 ```bash
-sqlite3 /path/to/ts6webui.db "PRAGMA table_info('Playlist');" | grep -F nameKey \
-  || echo "no nameKey column — schema unchanged by refused preflight"
+count="$(sqlite3 -readonly /path/to/ts6webui.db \
+  "SELECT COUNT(*) FROM pragma_table_info('Playlist') WHERE name = 'nameKey';")" || {
+  echo "could not inspect database — do not assume it is unchanged" >&2
+  exit 1
+}
+if [ "$count" = "0" ]; then
+  echo "no nameKey column — schema looks pre-nameKey / unchanged by refused preflight"
+else
+  echo "nameKey column is present (count=$count)"
+fi
 ```
 
 Also confirm `.schema-version` (if present) still shows the previous release marker.

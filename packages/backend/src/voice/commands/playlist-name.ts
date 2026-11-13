@@ -111,8 +111,16 @@ export function classifySqlitePreflightTarget(opts: {
   }
 
   try {
-    if (!fs.statSync(absolutePath).isFile()) {
+    const st = fs.statSync(absolutePath);
+    if (!st.isFile()) {
       return { kind: 'error', message: `DATABASE_URL path is not a file: ${absolutePath}` };
+    }
+    // Zero-byte files are not readable SQLite DBs; opening them must not yield a false PASS.
+    if (st.size === 0) {
+      return {
+        kind: 'error',
+        message: `DATABASE_URL targets an empty file (not a readable SQLite database): ${absolutePath}`,
+      };
     }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
@@ -122,6 +130,55 @@ export function classifySqlitePreflightTarget(opts: {
     };
   }
   return { kind: 'present', absolutePath };
+}
+
+/** Columns required on Playlist for both legacy v1.11.x and current schemas. */
+const TS6_PLAYLIST_REQUIRED_COLUMNS = ['id', 'name', 'serverConfigId'] as const;
+
+export type Ts6PlaylistSchemaInspection =
+  | { kind: 'ok'; hasNameKey: boolean }
+  | { kind: 'not_ts6'; message: string }
+  | { kind: 'unreadable'; message: string };
+
+/**
+ * Read-only schema gate: refuse empty/unrelated SQLite files that lack a TS6
+ * Playlist table (or required columns). Does not treat "zero playlists" as
+ * "not a TS6 DB" — an empty Playlist table is a valid, compatible result.
+ */
+export async function inspectTs6PlaylistSchema(db: NameLookupDb): Promise<Ts6PlaylistSchemaInspection> {
+  if (!db.$queryRawUnsafe) {
+    return { kind: 'ok', hasNameKey: true };
+  }
+  try {
+    const tables = await db.$queryRawUnsafe(
+      `SELECT name AS name FROM sqlite_master WHERE type = 'table' AND name = 'Playlist'`,
+    ) as Array<{ name: string }>;
+    if (!tables.length) {
+      return {
+        kind: 'not_ts6',
+        message: 'Not a TS6 Manager database; compatibility was not checked.',
+      };
+    }
+    const cols = await db.$queryRawUnsafe(
+      `PRAGMA table_info("Playlist")`,
+    ) as Array<{ name: string }>;
+    const names = new Set(cols.map((c) => c.name));
+    for (const required of TS6_PLAYLIST_REQUIRED_COLUMNS) {
+      if (!names.has(required)) {
+        return {
+          kind: 'not_ts6',
+          message: 'Not a TS6 Manager database; compatibility was not checked.',
+        };
+      }
+    }
+    return { kind: 'ok', hasNameKey: names.has('nameKey') };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      kind: 'unreadable',
+      message: `Database could not be inspected; compatibility was not checked (${detail})`,
+    };
+  }
 }
 
 export function normalizePlaylistDisplayName(name: string): string {
