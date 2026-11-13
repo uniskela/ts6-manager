@@ -145,8 +145,9 @@ describe('Discord slash registration client (Phase 2C step 3B.2)', () => {
     });
     assert.equal(posts, 1);
     assert.deepEqual(applied.applied.map((a) => a.name), ['play']);
-    assert.ok(applied.errors.some((e) => e.name === 'stop'));
-    assert.ok(applied.skipped.includes('custommod') || applied.skipped.includes('missing'));
+    assert.ok(applied.errors.some((e) => e.name === 'stop' && /collision/i.test(e.message)));
+    assert.ok(applied.errors.some((e) => e.name === 'custommod' && /unknown|unsupported/i.test(e.message)));
+    assert.ok(applied.errors.some((e) => e.name === 'missing' && /unknown|unsupported/i.test(e.message)));
     // Unrelated never DELETEd.
     assert.equal(posts, 1);
   });

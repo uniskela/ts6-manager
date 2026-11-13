@@ -137,35 +137,72 @@ Do **not** use `guild-bind-cli.js` against production `ts6webui.db` — that CLI
 
 ### 6. Preview guild slash-command registration
 
-Registration is **guild-scoped** only (`/applications/{application.id}/guilds/{guild.id}/commands`). The preview CLI never registers globally and never deletes unrelated remote commands.
+Registration is **guild-scoped** only (`/applications/{application.id}/guilds/{guild.id}/commands`). Preview never registers globally and never deletes unrelated remote commands.
+
+`docker compose exec` does **not** forward arbitrary variables from your shell. Pass the bot token with `-e` for any command that talks to Discord (`--fetch-remote` or `apply`). Prefer a one-shot env injection over baking `DISCORD_BOT_TOKEN` into the long-running backend service environment when you only need it for registration.
 
 ```bash
 # Offline plan (no Discord HTTP)
-docker compose exec backend node dist/discord-command/slash-register-cli.js \
+docker compose exec backend node dist/discord-command/slash-register-cli.js preview \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID"
 
-# Compare against live guild commands (reads Discord API; needs DISCORD_BOT_TOKEN in the container env)
-docker compose exec -e DISCORD_BOT_TOKEN backend node dist/discord-command/slash-register-cli.js \
+# Compare against live guild commands (GET only).
+# -e NAME=value injects into the one-shot process; host env is not forwarded automatically.
+docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+  node dist/discord-command/slash-register-cli.js preview \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID" \
   --fetch-remote
 ```
 
-Inspect create / update / unchanged / collisions. Resolve collisions before any apply. Empty name lists mean no writes.
+Inspect create / update / unchanged / collisions. Resolve collisions before apply. Never omit `--names` on apply — absence does **not** mean “register everything”.
 
-### 7. Apply registration (current capability gap)
+### 7. Apply guild slash-command registration
 
-The library supports an explicit `apply` with `confirmApply` and `confirmSameNameOverwrite` for same-name schema updates. The published **`slash-register-cli` is dry-run only** — it does **not** perform live apply.
+Apply re-fetches the current guild command list, then `POST`s upserts **by name** only for the names you list. It never uses the global commands endpoint, never bulk `PUT`s, and never `DELETE`s unrelated remotes.
 
-Until a production apply subcommand ships, treat live registration as an **operator gap**: do not invent ad-hoc scripts in production docs, and do not use global or bulk-PUT registration from the Discord portal in a way that bypasses collision checks. Prefer waiting for a reviewed apply CLI, or perform apply only through a maintained internal procedure that calls the same library guards.
+```bash
+# Example: register a first set of commands (creates only — no same-name overwrite flag needed)
+docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+  node dist/discord-command/slash-register-cli.js apply \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --names "ts,play,queue,nowplaying,pause,resume,skip,stop,volume,playlist,radio" \
+  --confirm-apply
 
-Protections that must remain true whenever apply is used:
+# Same-name schema updates require an extra confirmation
+docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+  node dist/discord-command/slash-register-cli.js apply \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --names "play" \
+  --confirm-apply \
+  --confirm-same-name-overwrite
+```
+
+**All-in-one** (service `ts6`): same commands with  
+`docker compose -f docker-compose.all-in-one.yml exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" ts6 …`.
+
+Required before any write:
+
+| Flag / input | Purpose |
+|--------------|---------|
+| `apply` action | Preview remains the default; writes need the explicit action |
+| `--names a,b,…` | Nonempty list of **supported** command names only |
+| `--confirm-apply` | Separate confirmation that this is not a dry run |
+| `--confirm-same-name-overwrite` | Required when the live plan would update an existing same-name command |
+| `DISCORD_BOT_TOKEN` in process env | Never pass the token as a CLI argument |
+
+Partial success (some names written, others errored) exits nonzero and prints `PARTIAL`. Re-running after a successful apply is idempotent for unchanged names (skipped; no extra POSTs).
+
+Protections:
 
 - No global registration.
 - No bulk overwrite of the entire guild command set.
 - No DELETE of unrelated remote commands.
-- Same-name updates require explicit overwrite confirmation.
+- Unknown names are refused before Discord writes.
+- Collisions are refused.
 
 ### 8. Enable interactions
 
@@ -218,10 +255,12 @@ All commands below assume the image working directory `/app/packages/backend` (t
 
 | Artifact | Discord API? | DB? | Purpose |
 |----------|--------------|-----|---------|
-| `dist/discord-command/slash-register-cli.js` | Only with `--fetch-remote` | No | Dry-run registration plan |
+| `dist/discord-command/slash-register-cli.js` | `preview --fetch-remote` (GET); `apply` (GET+POST) | No | Guild command preview and explicit apply |
 | `dist/discord-command/prod-guild-bind-cli.js` | No | Yes (`ts6webui.db`) | Preview / bind / revoke / status with audit |
 | `dist/discord-command/guild-bind-cli.js` | No | Isolated INT DBs | Lab/disposable bindings only |
 | `dist/discord-command/integration-readiness-cli.js` | No | No | Config readiness checklist (lab/dev) |
+
+`DISCORD_BOT_TOKEN` is an **operator registration** credential. Inbound interaction verification uses `DISCORD_PUBLIC_KEY` only. You do not need the bot token in the long-running backend env for signature checks.
 
 Compose service names:
 
@@ -238,7 +277,7 @@ Database URL in published compose files: `file:/app/packages/backend/data/ts6web
 - Large HTTP floods still need **edge** protection.
 - `/ts bridge` reports unavailable without a released voice-bridge worker (by design while Path A Commands & Radio ships without D1).
 - Discord users are not TeamSpeak identities; media-group rules that key on TS uids will not treat Discord callers as channel members.
-- Live slash **apply** is not exposed by the published CLI yet (see above).
+- Slash apply is guild-scoped and name-listed only; multi-replica interaction-id replay remains in-process.
 
 ## Related docs
 

@@ -317,8 +317,10 @@ export function createSlashRegistrationClient(opts: SlashRegistrationClientOpts)
     const skipped: string[] = [];
     const errors: SlashRegistrationApplyResult['errors'] = [];
 
+    const supported = new Set(getSupportedSlashCommands().map((c) => c.name));
     const creatable = new Map(plan.create.map((c) => [c.name, c]));
     const updatable = new Map(plan.update.map((u) => [u.local.name, u.local]));
+    const unchanged = new Set(plan.unchanged.map((u) => u.local.name));
 
     const wantsUpdate = [...wanted].some((name) => updatable.has(name));
     if (wantsUpdate && optsApply.confirmSameNameOverwrite !== true) {
@@ -328,13 +330,19 @@ export function createSlashRegistrationClient(opts: SlashRegistrationClientOpts)
     }
 
     for (const name of wanted) {
+      if (!supported.has(name)) {
+        errors.push({ name, message: 'unknown or unsupported command name' });
+        continue;
+      }
       if (plan.collisions.some((c) => c.remote.name === name)) {
         errors.push({ name, message: 'name collision; refusing to upsert' });
         continue;
       }
       const def = creatable.get(name) ?? updatable.get(name);
       if (!def) {
-        skipped.push(name);
+        // Already equivalent remotely (idempotent) or otherwise not writable.
+        if (unchanged.has(name)) skipped.push(name);
+        else errors.push({ name, message: 'not eligible for create/update in current plan' });
         continue;
       }
       const action = creatable.has(name) ? 'create' : 'update';
