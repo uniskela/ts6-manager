@@ -20,6 +20,7 @@ export {
   type ParsedInteractionEnvelope,
 } from './interaction.js';
 export {
+  classifyDiscordRawBodyError,
   createDiscordInteractionsMisconfiguredRouter,
   createDiscordInteractionsRouter,
   isValidDiscordPublicKeyHex,

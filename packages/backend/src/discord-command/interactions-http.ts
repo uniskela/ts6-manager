@@ -80,6 +80,13 @@ const SIG_HEADER = 'x-signature-ed25519';
 const TS_HEADER = 'x-signature-timestamp';
 const RATE_LIMITED = { error: 'Too many Discord interaction requests', code: 'rate_limited' };
 
+/** Safe client copies for expected raw-body failures (never echo parser messages). */
+const BODY_PARSER_RESPONSE: Record<400 | 413 | 415, { error: string }> = {
+  400: { error: 'Invalid request body.' },
+  413: { error: 'Request body too large.' },
+  415: { error: 'Unsupported content encoding.' },
+};
+
 function headerString(req: Request, name: string): string {
   const raw = req.headers[name];
   return typeof raw === 'string' ? raw : '';
@@ -106,8 +113,67 @@ function interactionIdFromBody(body: string): string | null {
 }
 
 /**
+ * Map express.raw / body-parser / zlib failures to a client status.
+ * Returns null for unrelated errors (must fall through to the app handler).
+ */
+export function classifyDiscordRawBodyError(err: unknown): 400 | 413 | 415 | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as {
+    status?: number;
+    statusCode?: number;
+    type?: string;
+    name?: string;
+    message?: string;
+    expose?: boolean;
+  };
+  const status = e.status ?? e.statusCode;
+  if (status === 413 || e.type === 'entity.too.large' || e.name === 'PayloadTooLargeError') return 413;
+  if (status === 415 || e.type === 'encoding.unsupported' || e.name === 'UnsupportedMediaTypeError') return 415;
+  if (status === 400) {
+    if (
+      e.type === 'encoding.failed'
+      || e.type === 'entity.verify.failed'
+      || e.type === 'entity.parse.failed'
+      || e.type === 'request.size.invalid'
+      || e.type === 'streamencoding.unsupported'
+    ) {
+      return 400;
+    }
+    // zlib inflate failures often have status 400 + expose, without a body-parser type.
+    if (/incorrect header check|unexpected end of file|invalid stored block lengths|incorrect data check/i.test(
+      String(e.message ?? ''),
+    )) {
+      return 400;
+    }
+    if (e.expose === true && (e.type == null || String(e.type).startsWith('encoding.'))) return 400;
+  }
+  return null;
+}
+
+function refuseUnauthenticatedBodyParser(
+  req: Request,
+  res: Response,
+  deps: Pick<DiscordInteractionsHttpDeps, 'rateGates'>,
+  status: 400 | 413 | 415,
+): void {
+  const gates = deps.rateGates ?? null;
+  if (gates) {
+    const key = gates.clientKey(req);
+    if (!gates.takeUnauthenticated(key)) {
+      sendOnce(res, 429, RATE_LIMITED);
+      return;
+    }
+  }
+  sendOnce(res, status, BODY_PARSER_RESPONSE[status]);
+}
+
+/**
  * Discord Interactions endpoint. Mount **before** `express.json()` so the
  * Ed25519 check sees the exact request bytes.
+ *
+ * Raw-body parser failures are handled on this router: they consume the
+ * unauthenticated budget and never reach signature verification, command
+ * execution, or the generic app error logger.
  */
 export function createDiscordInteractionsRouter(deps: DiscordInteractionsHttpDeps): Router {
   const router = Router();
@@ -123,6 +189,19 @@ export function createDiscordInteractionsRouter(deps: DiscordInteractionsHttpDep
       });
     },
   );
+  // Must stay on this router so expected parser errors do not hit errorHandler.
+  router.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    const status = classifyDiscordRawBodyError(err);
+    if (status == null) {
+      next(err);
+      return;
+    }
+    refuseUnauthenticatedBodyParser(req, res, deps, status);
+  });
   return router;
 }
 

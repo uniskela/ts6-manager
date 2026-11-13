@@ -1010,8 +1010,9 @@ describe('F4 Discord interactions split rate limits', () => {
     }
   });
 
-  it('rejects oversized bodies before command work', async () => {
+  it('rejects oversized bodies before command work and counts unauth budget', async () => {
     const keys = ed25519();
+    const gates = memoryRateGates({ unauthMax: 2, authMax: 100 });
     const app = enabledApp({
       keys,
       adapter: {
@@ -1019,27 +1020,27 @@ describe('F4 Discord interactions split rate limits', () => {
           assert.fail('adapter must not run for oversized bodies');
         },
       },
-      rateGates: memoryRateGates(),
+      rateGates: gates,
       replay: new MemoryReplayGuard(),
-    });
-    app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-      if (res.headersSent) {
-        next(err);
-        return;
-      }
-      const status = typeof err === 'object' && err && 'status' in err && typeof (err as { status: unknown }).status === 'number'
-        ? (err as { status: number }).status
-        : 500;
-      res.status(status).json({ error: 'Rejected.' });
     });
     const srv = await listen(app);
     try {
       const huge = `{"type":2,"id":"ix-huge","pad":"${'x'.repeat(300_000)}"}`;
-      const res = await postInteraction(srv.port, {
+      assert.equal((await postInteraction(srv.port, {
         body: huge,
         signatureHex: keys.sign(TIMESTAMP, huge),
-      });
-      assert.equal(res.status, 413);
+      })).status, 413);
+      assert.equal((await postInteraction(srv.port, {
+        body: huge,
+        signatureHex: keys.sign(TIMESTAMP, huge),
+      })).status, 413);
+      assert.equal((await postInteraction(srv.port, {
+        body: huge,
+        signatureHex: keys.sign(TIMESTAMP, huge),
+      })).status, 429);
+      assert.equal(gates.authHits.get('ipv4:127.0.0.1') ?? 0, 0);
+      // Two admitted 413s plus the refusing hit that returns 429.
+      assert.equal(gates.unauthHits.get('ipv4:127.0.0.1'), 3);
     } finally {
       await srv.close();
     }
