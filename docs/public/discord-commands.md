@@ -96,9 +96,20 @@ TRUST_PROXY=loopback,YOUR_PROXY_CIDR
 # LISTEN_HOST=   # leave unset for normal Docker images
 ```
 
-3. Always pass **both** `-f` files. Explicit `-f` disables Compose’s automatic `docker-compose.override.yml` load — include every file you rely on every time.
+3. Always pass the **complete file set for your deployment**. Explicit `-f` disables Compose’s automatic `docker-compose.override.yml` load — omit a file and Compose drops that overlay’s env, volumes, and dependencies on recreate.
 
-**Split — apply env and recreate the backend container** (restart alone does not reload Compose environment):
+**Split file sets** (use the same set for every `config`, `up`, and `exec`):
+
+| Deployment | `-f` files (order matters) |
+|------------|----------------------------|
+| Without radio fetcher | `docker-compose.yml` → `docker-compose.discord-commands.example.yml` |
+| With radio fetcher | `docker-compose.yml` → `docker-compose.media-fetcher.yml` → `docker-compose.discord-commands.example.yml` |
+
+If the stack already uses the [isolated radio fetcher](radio-fetcher.md), **never** recreate or exec with only the base + Discord overlay — that drops `MEDIA_FETCHER*`, the `/jobs` mount, and fetcher `depends_on`, breaking TeamSpeak `!radio` and Discord `/radio`.
+
+**Split — apply Discord env and recreate the backend** (restart alone does not reload Compose environment):
+
+Without radio fetcher:
 
 ```bash
 docker compose \
@@ -107,7 +118,17 @@ docker compose \
   up -d --force-recreate backend
 ```
 
-**All-in-one:**
+With radio fetcher (keep the media-fetcher overlay):
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.media-fetcher.yml \
+  -f docker-compose.discord-commands.example.yml \
+  up -d --force-recreate backend
+```
+
+**All-in-one** (no media-fetcher overlay; radio stays fail-closed — see [Radio fetcher](radio-fetcher.md)):
 
 ```bash
 docker compose \
@@ -116,12 +137,15 @@ docker compose \
   up -d --force-recreate ts6
 ```
 
-Validate interpolation (dummy values are fine):
+Validate interpolation (dummy values are fine); radio-enabled stacks must include the media-fetcher file:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml config
+docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml -f docker-compose.discord-commands.example.yml config
 docker compose -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml config
 ```
+
+Later split examples below show the **without radio fetcher** file set. On a radio-enabled deployment, insert `-f docker-compose.media-fetcher.yml` after `docker-compose.yml` in every command.
 
 Keep `DISCORD_INTERACTIONS_ENABLED=false` until binding, HTTPS, and registration are ready. Full variable descriptions: [Environment variables](environment-variables.md#discord-commands--radio).
 
@@ -422,7 +446,7 @@ Keep WebSocket upgrade configuration for `/ws` as in [Reverse proxy](reverse-pro
 
 | Layout | How to invoke |
 |--------|----------------|
-| Split `backend` | `docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml exec [ -e DISCORD_BOT_TOKEN ] backend node dist/discord-command/…` |
+| Split `backend` | `docker compose -f docker-compose.yml [-f docker-compose.media-fetcher.yml] -f docker-compose.discord-commands.example.yml exec [ -e DISCORD_BOT_TOKEN ] backend node dist/discord-command/…` — include media-fetcher when that overlay is part of the deployment |
 | All-in-one `ts6` | `… -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml exec -w /app/packages/backend [ -e DISCORD_BOT_TOKEN ] ts6 node dist/discord-command/…` |
 
 | Artifact | Discord API? | DB? | Purpose |
