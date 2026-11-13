@@ -31,7 +31,8 @@ describe('Discord Ed25519 signatures', () => {
       signatureHex: keys.sign(timestamp, body),
       nowMs: 1_700_000_000_000,
     });
-    assert.deepEqual(result, { ok: true });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.timestampMs, 1_700_000_000_000);
   });
 
   it('rejects an invalid signature', () => {
@@ -220,6 +221,14 @@ describe('invoke HMAC and replay guard', () => {
       secret, timestamp, nonce, body, signatureHex, replay, nowMs: afterValidity, maxAgeMs,
     });
     assert.deepEqual(third, { ok: false, code: 'replay' });
+  });
+
+  it('fails closed when the bounded replay cache is full', () => {
+    const replay = new MemoryReplayGuard(maxAgeMs, 2);
+    assert.equal(replay.claim('a', 1_700_000_000_000), true);
+    assert.equal(replay.claim('b', 1_700_000_000_000), true);
+    assert.equal(replay.claim('c', 1_700_000_000_000), false);
+    assert.equal(replay.size(), 2);
   });
 
   it('protects replay through the inclusive last-valid timestamp', () => {

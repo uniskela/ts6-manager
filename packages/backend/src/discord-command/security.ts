@@ -1,10 +1,12 @@
 import { createHmac, createPublicKey, timingSafeEqual, verify } from 'node:crypto';
 
 export type SecurityFailure = { ok: false; code: 'invalid_signature' | 'replay' };
-export type SecurityResult = { ok: true } | SecurityFailure;
+export type SecurityResult = { ok: true; timestampMs?: number } | SecurityFailure;
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-const DEFAULT_MAX_AGE_MS = 60_000;
+export const DEFAULT_MAX_AGE_MS = 60_000;
+/** Soft cap so a flood of distinct interaction ids cannot grow without bound. */
+const DEFAULT_REPLAY_MAX_ENTRIES = 50_000;
 
 export interface ReplayGuard {
   /** Claim `nonce` until `expiresAtMs` (receiver clock). Defaults to `nowMs +` guard TTL. */
@@ -14,15 +16,27 @@ export interface ReplayGuard {
 /**
  * In-process replay cache. Survives neither process restart nor multi-instance
  * fan-out; callers that need cross-node dedupe must supply a shared ReplayGuard.
+ *
+ * When at capacity after GC, new claims fail closed (return false) rather than
+ * evicting a still-valid nonce — eviction would reopen a replay window.
  */
 export class MemoryReplayGuard implements ReplayGuard {
   private readonly seen = new Map<string, number>();
 
-  constructor(private readonly ttlMs = DEFAULT_MAX_AGE_MS) {}
+  constructor(
+    private readonly ttlMs = DEFAULT_MAX_AGE_MS,
+    private readonly maxEntries = DEFAULT_REPLAY_MAX_ENTRIES,
+  ) {}
+
+  /** Test/observability helper — not part of the hot path. */
+  size(): number {
+    return this.seen.size;
+  }
 
   claim(nonce: string, nowMs: number, expiresAtMs = nowMs + this.ttlMs): boolean {
     this.gc(nowMs);
     if (this.seen.has(nonce)) return false;
+    if (this.seen.size >= this.maxEntries) return false;
     this.seen.set(nonce, expiresAtMs);
     return true;
   }
@@ -77,7 +91,7 @@ export function verifyDiscordSignature(opts: {
     const key = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: 'der', type: 'spki' });
     const sig = Buffer.from(opts.signatureHex, 'hex');
     const ok = verify(null, Buffer.from(`${opts.timestamp}${opts.body}`), key, sig);
-    return ok ? { ok: true } : { ok: false, code: 'invalid_signature' };
+    return ok ? { ok: true, timestampMs } : { ok: false, code: 'invalid_signature' };
   } catch {
     return { ok: false, code: 'invalid_signature' };
   }

@@ -24,6 +24,7 @@ export {
   createDiscordInteractionsRouter,
   isValidDiscordPublicKeyHex,
   type DiscordInteractionAdapter,
+  type DiscordInteractionRateGates,
   type DiscordInteractionsHttpDeps,
 } from './interactions-http.js';
 export {

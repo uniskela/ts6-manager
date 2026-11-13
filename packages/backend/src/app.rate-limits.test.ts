@@ -77,11 +77,18 @@ async function flood(count: number, send: (from: string) => Promise<Response>) {
 }
 
 describe('app rate limiter stores', () => {
-  it('exposes a bounded Discord interactions rate-limit store', async () => {
+  it('exposes split bounded Discord interactions rate-limit stores', async () => {
     const app = (await import('./app.js')).createApp();
-    const store = app.locals.discordInteractionsRateLimitStore as BoundedRateLimitStore | undefined;
-    assert.ok(store);
-    assert.equal(typeof store.increment, 'function');
+    const auth = app.locals.discordInteractionsAuthRateLimitStore as BoundedRateLimitStore | undefined;
+    const unauth = app.locals.discordInteractionsUnauthRateLimitStore as BoundedRateLimitStore | undefined;
+    const legacy = app.locals.discordInteractionsRateLimitStore as BoundedRateLimitStore | undefined;
+    assert.ok(auth);
+    assert.ok(unauth);
+    assert.equal(legacy, auth);
+    assert.equal(typeof auth.increment, 'function');
+    assert.equal(typeof unauth.increment, 'function');
+    assert.deepEqual([auth.windowMs, auth.limit], [60_000, 120]);
+    assert.deepEqual([unauth.windowMs, unauth.limit], [60_000, 120]);
   });
 
   it('stay bounded on the listener remote path under many distinct addresses', async () => using(async f => {

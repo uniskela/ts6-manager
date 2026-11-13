@@ -11,10 +11,12 @@ import {
   createDiscordInteractionsMisconfiguredRouter,
   createDiscordInteractionsRouter,
   isValidDiscordPublicKeyHex,
+  type DiscordInteractionRateGates,
 } from './interactions-http.js';
 import { MemoryCommandIdempotency } from './idempotency.js';
 import { createMusicCommandService } from './music-service.js';
 import { createDiscordCommandRuntime, MemoryGuildBindingLookup } from './runtime.js';
+import { MemoryReplayGuard } from './security.js';
 
 const NOW_MS = 1_700_000_000_000;
 const TIMESTAMP = '1700000000';
@@ -162,6 +164,31 @@ function commandBody(partial: {
   return JSON.stringify(payload);
 }
 
+function memoryRateGates(opts?: { unauthMax?: number; authMax?: number }): DiscordInteractionRateGates & {
+  unauthHits: Map<string, number>;
+  authHits: Map<string, number>;
+} {
+  const unauthMax = opts?.unauthMax ?? 120;
+  const authMax = opts?.authMax ?? 120;
+  const unauthHits = new Map<string, number>();
+  const authHits = new Map<string, number>();
+  return {
+    unauthHits,
+    authHits,
+    clientKey: () => 'ipv4:127.0.0.1',
+    takeUnauthenticated(key: string) {
+      const next = (unauthHits.get(key) ?? 0) + 1;
+      unauthHits.set(key, next);
+      return next <= unauthMax;
+    },
+    takeAuthenticated(key: string) {
+      const next = (authHits.get(key) ?? 0) + 1;
+      authHits.set(key, next);
+      return next <= authMax;
+    },
+  };
+}
+
 function enabledApp(opts: {
   keys: ReturnType<typeof ed25519>;
   adapter: { handle(intent: DiscordCommandIntent): Promise<any> } | null;
@@ -170,6 +197,8 @@ function enabledApp(opts: {
   expectedApplicationId?: string | null;
   nowMs?: () => number;
   onDeliveryError?: (info: { command: string; guildId: string; reason: string }) => void;
+  rateGates?: DiscordInteractionRateGates | null;
+  replay?: MemoryReplayGuard | null;
 }) {
   const app = express();
   app.locals.discordCommandAdapter = opts.adapter;
@@ -183,6 +212,8 @@ function enabledApp(opts: {
     expectedApplicationId: opts.expectedApplicationId === undefined ? APP_ID : opts.expectedApplicationId,
     nowMs: opts.nowMs ?? (() => NOW_MS),
     onDeliveryError: opts.onDeliveryError,
+    rateGates: opts.rateGates,
+    replay: opts.replay,
   }));
   app.use(express.json());
   return app;
@@ -898,5 +929,403 @@ describe('createDiscordCommandRuntime injection boundary', () => {
     });
     assert.equal(result.ok, true);
     assert.ok(createMusicCommandService);
+  });
+});
+
+describe('F4 Discord interactions split rate limits', () => {
+  it('rejects invalid and missing signatures with 401 without consuming auth budget', async () => {
+    const keys = ed25519();
+    const gates = memoryRateGates({ unauthMax: 50, authMax: 5 });
+    const handles: string[] = [];
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle(intent) {
+          handles.push(intent.command);
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      },
+      rateGates: gates,
+      replay: new MemoryReplayGuard(),
+    });
+    const srv = await listen(app);
+    try {
+      const body = commandBody({ id: 'ix-auth-budget' });
+      assert.equal((await postInteraction(srv.port, { body, signatureHex: '00'.repeat(64) })).status, 401);
+      assert.equal((await postInteraction(srv.port, { body, signatureHex: null })).status, 401);
+      assert.equal(gates.authHits.get('ipv4:127.0.0.1') ?? 0, 0);
+      assert.equal(gates.unauthHits.get('ipv4:127.0.0.1'), 2);
+
+      const ok = await postInteraction(srv.port, { body, signatureHex: keys.sign(TIMESTAMP, body) });
+      assert.equal(ok.status, 200);
+      assert.equal(handles.length, 1);
+      assert.equal(gates.authHits.get('ipv4:127.0.0.1'), 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('unsigned floods cannot exhaust the authenticated command budget', async () => {
+    const keys = ed25519();
+    const gates = memoryRateGates({ unauthMax: 1000, authMax: 3 });
+    let handled = 0;
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      },
+      rateGates: gates,
+      replay: new MemoryReplayGuard(),
+    });
+    const srv = await listen(app);
+    try {
+      for (let i = 0; i < 40; i++) {
+        const res = await postInteraction(srv.port, {
+          body: commandBody({ id: `ix-flood-${i}` }),
+          signatureHex: 'ab'.repeat(64),
+        });
+        assert.equal(res.status, 401);
+      }
+      assert.equal(gates.authHits.get('ipv4:127.0.0.1') ?? 0, 0);
+
+      for (let i = 0; i < 3; i++) {
+        const body = commandBody({ id: `ix-ok-${i}` });
+        const res = await postInteraction(srv.port, { body, signatureHex: keys.sign(TIMESTAMP, body) });
+        assert.equal(res.status, 200, `signed ${i}`);
+      }
+      assert.equal(handled, 3);
+
+      const blockedBody = commandBody({ id: 'ix-blocked' });
+      const blocked = await postInteraction(srv.port, {
+        body: blockedBody,
+        signatureHex: keys.sign(TIMESTAMP, blockedBody),
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(handled, 3);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('rejects oversized bodies before command work', async () => {
+    const keys = ed25519();
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          assert.fail('adapter must not run for oversized bodies');
+        },
+      },
+      rateGates: memoryRateGates(),
+      replay: new MemoryReplayGuard(),
+    });
+    app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (res.headersSent) {
+        next(err);
+        return;
+      }
+      const status = typeof err === 'object' && err && 'status' in err && typeof (err as { status: unknown }).status === 'number'
+        ? (err as { status: number }).status
+        : 500;
+      res.status(status).json({ error: 'Rejected.' });
+    });
+    const srv = await listen(app);
+    try {
+      const huge = `{"type":2,"id":"ix-huge","pad":"${'x'.repeat(300_000)}"}`;
+      const res = await postInteraction(srv.port, {
+        body: huge,
+        signatureHex: keys.sign(TIMESTAMP, huge),
+      });
+      assert.equal(res.status, 413);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('spoofed forwarded headers cannot bypass limits when proxy trust is disabled', async () => {
+    const keys = ed25519();
+    const { clientRateKey } = await import('../utils/client-address.js');
+    const hits = new Map<string, number>();
+    const gates: DiscordInteractionRateGates = {
+      clientKey: (req) => clientRateKey(req),
+      takeUnauthenticated(key) {
+        const next = (hits.get(`u:${key}`) ?? 0) + 1;
+        hits.set(`u:${key}`, next);
+        return next <= 2;
+      },
+      takeAuthenticated() {
+        return true;
+      },
+    };
+    const app = express();
+    // Default trust proxy is off — X-Forwarded-For must not mint a fresh key.
+    app.use('/api/discord/interactions', createDiscordInteractionsRouter({
+      publicKeyHex: keys.publicKeyHex,
+      getAdapter: () => ({
+        async handle() {
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      }),
+      getFollowUp: () => new MemoryDiscordFollowUp(),
+      expectedApplicationId: APP_ID,
+      nowMs: () => NOW_MS,
+      rateGates: gates,
+      replay: new MemoryReplayGuard(),
+    }));
+    const srv = await listen(app);
+    try {
+      for (let i = 0; i < 2; i++) {
+        const res = await fetch(`http://127.0.0.1:${srv.port}/api/discord/interactions`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-signature-ed25519': 'ab'.repeat(64),
+            'x-signature-timestamp': TIMESTAMP,
+            'x-forwarded-for': `198.51.100.${i}`,
+          },
+          body: commandBody({ id: `ix-xff-${i}` }),
+        });
+        assert.equal(res.status, 401);
+      }
+      const blocked = await fetch(`http://127.0.0.1:${srv.port}/api/discord/interactions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-signature-ed25519': 'ab'.repeat(64),
+          'x-signature-timestamp': TIMESTAMP,
+          'x-forwarded-for': '203.0.113.9',
+        },
+        body: commandBody({ id: 'ix-xff-blocked' }),
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(hits.size, 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('misconfigured feature stays fail-closed and rate-limits abuse', async () => {
+    const gates = memoryRateGates({ unauthMax: 2, authMax: 100 });
+    const app = express();
+    app.use('/api/discord/interactions', createDiscordInteractionsMisconfiguredRouter(gates));
+    const srv = await listen(app);
+    try {
+      assert.equal((await postInteraction(srv.port, { body: '{}', signatureHex: null })).status, 503);
+      assert.equal((await postInteraction(srv.port, { body: '{}', signatureHex: null })).status, 503);
+      assert.equal((await postInteraction(srv.port, { body: '{}', signatureHex: null })).status, 429);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+describe('F7 Discord interaction-id replay claims', () => {
+  it('executes a valid signed interaction once; duplicates skip side effects', async () => {
+    const keys = ed25519();
+    const replay = new MemoryReplayGuard(60_000);
+    let handled = 0;
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          return { ok: true, code: 'ok', ephemeral: true, content: `n=${handled}`, ack: 'immediate' };
+        },
+      },
+      replay,
+      rateGates: memoryRateGates(),
+    });
+    const srv = await listen(app);
+    try {
+      const body = commandBody({ id: 'ix-once' });
+      const sig = keys.sign(TIMESTAMP, body);
+      const first = await postInteraction(srv.port, { body, signatureHex: sig });
+      const second = await postInteraction(srv.port, { body, signatureHex: sig });
+      assert.equal(first.status, 200);
+      assert.equal((first.body as any).data?.content, 'n=1');
+      assert.equal(second.status, 200);
+      assert.match(String((second.body as any).data?.content ?? ''), /Duplicate/);
+      assert.equal(handled, 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('concurrent duplicates execute at most once', async () => {
+    const keys = ed25519();
+    const replay = new MemoryReplayGuard(60_000);
+    let handled = 0;
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          await new Promise((r) => setTimeout(r, 20));
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      },
+      replay,
+    });
+    const srv = await listen(app);
+    try {
+      const body = commandBody({ id: 'ix-concurrent' });
+      const sig = keys.sign(TIMESTAMP, body);
+      const results = await Promise.all(Array.from({ length: 8 }, () =>
+        postInteraction(srv.port, { body, signatureHex: sig })));
+      assert.equal(handled, 1);
+      assert.equal(results.filter((r) => String((r.body as any).data?.content ?? '').includes('Duplicate')).length, 7);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('keeps blocking after a short result-cache window while the signature remains valid', async () => {
+    const keys = ed25519();
+    const maxAgeMs = 60_000;
+    const replay = new MemoryReplayGuard(maxAgeMs);
+    let handled = 0;
+    let now = NOW_MS;
+    const app = express();
+    app.locals.discordCommandAdapter = {
+      async handle() {
+        handled += 1;
+        return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+      },
+    };
+    app.locals.discordInteractionFollowUp = new MemoryDiscordFollowUp();
+    app.use('/api/discord/interactions', createDiscordInteractionsRouter({
+      publicKeyHex: keys.publicKeyHex,
+      getAdapter: (req) => req.app.locals.discordCommandAdapter ?? null,
+      getFollowUp: (req) => req.app.locals.discordInteractionFollowUp ?? null,
+      expectedApplicationId: APP_ID,
+      nowMs: () => now,
+      maxAgeMs,
+      replay,
+    }));
+    const srv = await listen(app);
+    try {
+      const body = commandBody({ id: 'ix-long-claim' });
+      const sig = keys.sign(TIMESTAMP, body);
+      assert.equal((await postInteraction(srv.port, { body, signatureHex: sig })).status, 200);
+      assert.equal(handled, 1);
+      // Past a typical short result-cache window but still inside the signature window.
+      now = NOW_MS + 30_000;
+      const replayed = await postInteraction(srv.port, { body, signatureHex: sig });
+      assert.match(String((replayed.body as any).data?.content ?? ''), /Duplicate/);
+      assert.equal(handled, 1);
+      now = NOW_MS + maxAgeMs + 1;
+      const expired = await postInteraction(srv.port, { body, signatureHex: sig });
+      assert.equal(expired.status, 401);
+      assert.equal(handled, 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('invalid signatures do not claim interaction ids', async () => {
+    const keys = ed25519();
+    const replay = new MemoryReplayGuard(60_000);
+    let handled = 0;
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      },
+      replay,
+    });
+    const srv = await listen(app);
+    try {
+      const body = commandBody({ id: 'ix-no-claim-on-bad-sig' });
+      assert.equal((await postInteraction(srv.port, { body, signatureHex: 'cd'.repeat(64) })).status, 401);
+      assert.equal(replay.size(), 0);
+      const ok = await postInteraction(srv.port, { body, signatureHex: keys.sign(TIMESTAMP, body) });
+      assert.equal(ok.status, 200);
+      assert.equal(handled, 1);
+      assert.equal(replay.size(), 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('deferred duplicates do not double-ack or re-run follow-up side effects', async () => {
+    const keys = ed25519();
+    const replay = new MemoryReplayGuard(60_000);
+    let handled = 0;
+    const followUp = new MemoryDiscordFollowUp();
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          return { ok: true, code: 'ok', ephemeral: true, content: 'played', ack: 'deferred' };
+        },
+      },
+      followUp,
+      replay,
+    });
+    const srv = await listen(app);
+    try {
+      const body = commandBody({
+        id: 'ix-deferred-once',
+        command: 'play',
+        topLevel: 'play',
+        options: [{ name: 'query', type: 3, value: 'https://example.invalid/a' }],
+      });
+      const sig = keys.sign(TIMESTAMP, body);
+      const first = await postInteraction(srv.port, { body, signatureHex: sig });
+      assert.equal((first.body as any).type, 5);
+      for (let i = 0; i < 50 && followUp.jobs.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.equal(followUp.jobs.length, 1);
+      assert.equal(handled, 1);
+
+      const second = await postInteraction(srv.port, { body, signatureHex: sig });
+      assert.notEqual((second.body as any).type, 5);
+      assert.match(String((second.body as any).data?.content ?? ''), /Duplicate/);
+      assert.equal(handled, 1);
+      assert.equal(followUp.jobs.length, 1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('bounded replay cache fails closed when full', async () => {
+    const keys = ed25519();
+    const replay = new MemoryReplayGuard(60_000, 2);
+    let handled = 0;
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handled += 1;
+          return { ok: true, code: 'ok', ephemeral: true, content: 'ok', ack: 'immediate' };
+        },
+      },
+      replay,
+    });
+    const srv = await listen(app);
+    try {
+      for (const id of ['ix-a', 'ix-b']) {
+        const body = commandBody({ id });
+        assert.equal((await postInteraction(srv.port, {
+          body,
+          signatureHex: keys.sign(TIMESTAMP, body),
+        })).status, 200);
+      }
+      assert.equal(handled, 2);
+      const body = commandBody({ id: 'ix-c' });
+      const full = await postInteraction(srv.port, { body, signatureHex: keys.sign(TIMESTAMP, body) });
+      assert.match(String((full.body as any).data?.content ?? ''), /Duplicate/);
+      assert.equal(handled, 2);
+    } finally {
+      await srv.close();
+    }
   });
 });
