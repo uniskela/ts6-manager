@@ -10,14 +10,19 @@
  *     --application-id <id> --guild-id <id> --fetch-remote
  *
  * Apply (POST upserts by name only; never global / bulk PUT / DELETE):
- *   DISCORD_BOT_TOKEN=… node dist/discord-command/slash-register-cli.js apply \
+ *   # export DISCORD_BOT_TOKEN after interactive read -s (never literal in scripts)
+ *   node dist/discord-command/slash-register-cli.js apply \
  *     --application-id <id> --guild-id <id> \
  *     --names play,queue,ts \
  *     --confirm-apply \
  *     [--confirm-same-name-overwrite]
  *
  * Token is read only from DISCORD_BOT_TOKEN (env). Never pass tokens as argv.
- * docker compose exec does not forward host env — use `exec -e DISCORD_BOT_TOKEN=…`.
+ * docker compose exec does not forward host env by default — use
+ * `exec -e DISCORD_BOT_TOKEN` (name only) after exporting on the host.
+ * Do not use `-e DISCORD_BOT_TOKEN=value` (exposes the secret in process args).
+ * Do not leave the token in the long-running backend/service environment.
+ * Always `unset DISCORD_BOT_TOKEN` after the CLI run (including on failure).
  */
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';

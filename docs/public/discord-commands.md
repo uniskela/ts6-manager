@@ -30,6 +30,15 @@ Radio from Discord still needs the [isolated radio fetcher](radio-fetcher.md), s
 - At least one configured TeamSpeak server and music bot in the manager UI.
 - For `/radio`: media-fetcher overlay enabled ([Radio fetcher](radio-fetcher.md)).
 
+## Image working directories
+
+| Layout | Compose service | Image `WORKDIR` | Run Node CLIs from |
+|--------|-----------------|-----------------|--------------------|
+| Split backend | `backend` | `/app/packages/backend` | `node dist/discord-command/…` (cwd already correct) |
+| All-in-one | `ts6` | `/app` | `docker compose … exec -w /app/packages/backend ts6 node dist/…` |
+
+The database file path inside both images is `file:/app/packages/backend/data/ts6webui.db`.
+
 ## Security model (short)
 
 | Control | Behaviour |
@@ -38,8 +47,8 @@ Radio from Discord still needs the [isolated radio fetcher](radio-fetcher.md), s
 | Roles | Commands require configured Discord role IDs. Empty role lists fail closed. |
 | Guild binding | Unbound guilds are refused even with a valid signature. |
 | Rate limits | Separate unauthenticated vs authenticated budgets after verification; edge limiting is still recommended. |
-| Registration | Guild path only; no global commands; no bulk overwrite; same-name updates need explicit confirmation in the library API. |
-| Secrets | `DISCORD_BOT_TOKEN` is secret. Prefer not to put it in long-lived process env if you only need it for registration — inject for the CLI run. |
+| Registration | Guild path only; no global commands; no bulk overwrite; same-name updates need explicit confirmation. |
+| Bot token | Operator-only for registration CLIs. Do not put it in the long-running service environment. |
 
 ## Setup walkthrough
 
@@ -50,7 +59,7 @@ Placeholder values below (`YOUR_*`) are examples. Never commit real tokens, snow
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and create an application used **only** for this manager (do not reuse lab/INT apps on production).
 2. Note the **Application ID**.
 3. Under **General Information**, copy the **Public Key** (Ed25519 hex used to verify interactions).
-4. Under **Bot**, create a bot user and copy the **Bot token** once. Store it like any other secret.
+4. Under **Bot**, create a bot user and copy the **Bot token** once. Store it like any other secret (password manager). Do not paste it into tracked files or shell history as a literal argument.
 
 ### 2. Invite the application into one guild
 
@@ -61,22 +70,62 @@ Install the app into the target Discord server with permission to use applicatio
 
 Avoid privileged intents you do not need. Slash command handling for this feature does not require Message Content Intent.
 
-### 3. Configure TS6 Manager environment
+### 3. Pass runtime Discord settings into Compose
 
-Set on the **backend** (split stack: `backend` service; all-in-one: `ts6` service). Restart after changes.
+Stock `docker-compose.yml` / `docker-compose.all-in-one.yml` do **not** forward Discord variables into containers. Putting values only in a host `.env` is not enough unless Compose **lists** those keys under the service `environment:` so they are interpolated into the container.
 
-| Variable | Role |
-|----------|------|
-| `DISCORD_APPLICATION_ID` | Application snowflake (runtime + registration identity). |
-| `DISCORD_PUBLIC_KEY` | Ed25519 public key hex (runtime verification). |
-| `DISCORD_INSTANCE_ID` | Must match the guild binding’s instance id (default `local`). |
-| `DISCORD_VIEWER_ROLE_IDS` | Comma-separated Discord role IDs allowed to run viewer commands. |
-| `DISCORD_ADMIN_ROLE_IDS` | Comma-separated Discord role IDs allowed to run admin commands. |
-| `DISCORD_BOT_TOKEN` | Bot token — needed for Discord **API** registration calls; not required for verifying inbound interactions. |
-| `DISCORD_INTERACTIONS_ENABLED` | Keep `false` until binding, HTTPS, and registration are ready. |
-| `LISTEN_HOST` | Optional bind address; leave unset in normal Docker images. |
+Use a deployment-local overlay (tracked examples ship without secrets):
 
-Full descriptions: [Environment variables](environment-variables.md#discord-commands--radio). Also configure [TRUST_PROXY](environment-variables.md) correctly behind your reverse proxy so rate limits see real client addresses where intended.
+| Layout | Base file | Overlay example |
+|--------|-----------|-----------------|
+| Split | `docker-compose.yml` | [`docker-compose.discord-commands.example.yml`](../../docker-compose.discord-commands.example.yml) |
+| All-in-one | `docker-compose.all-in-one.yml` | [`docker-compose.discord-commands.all-in-one.example.yml`](../../docker-compose.discord-commands.all-in-one.example.yml) |
+
+1. Copy the matching example next to your compose files (or maintain an equivalent private overlay).
+2. Put **non-secret** Discord runtime values in the Compose project `.env` (or your secret store that feeds Compose interpolation):
+
+```bash
+# Example host .env keys (no bot token)
+DISCORD_INTERACTIONS_ENABLED=false
+DISCORD_PUBLIC_KEY=YOUR_PUBLIC_KEY_HEX
+DISCORD_APPLICATION_ID=YOUR_APPLICATION_ID
+DISCORD_INSTANCE_ID=local
+DISCORD_VIEWER_ROLE_IDS=YOUR_VIEWER_ROLE_ID
+DISCORD_ADMIN_ROLE_IDS=YOUR_ADMIN_ROLE_ID
+TRUST_PROXY=loopback,YOUR_PROXY_CIDR
+# LISTEN_HOST=   # leave unset for normal Docker images
+```
+
+3. Always pass **both** `-f` files. Explicit `-f` disables Compose’s automatic `docker-compose.override.yml` load — include every file you rely on every time.
+
+**Split — apply env and recreate the backend container** (restart alone does not reload Compose environment):
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  up -d --force-recreate backend
+```
+
+**All-in-one:**
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  up -d --force-recreate ts6
+```
+
+Validate interpolation (dummy values are fine):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml config
+docker compose -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml config
+```
+
+Keep `DISCORD_INTERACTIONS_ENABLED=false` until binding, HTTPS, and registration are ready. Full variable descriptions: [Environment variables](environment-variables.md#discord-commands--radio).
+
+Do **not** add `DISCORD_BOT_TOKEN` to the overlay or long-running service env. Registration uses a one-shot forwarded token ([§ Bot token for registration CLIs](#bot-token-for-registration-clis)).
 
 ### 4. Expose the interactions endpoint over HTTPS
 
@@ -84,21 +133,28 @@ Discord must reach:
 
 `POST https://YOUR_PUBLIC_HOST/api/discord/interactions`
 
-On the published images, `/api` is already proxied to the backend by the frontend/all-in-one nginx. Terminate TLS at your outer reverse proxy and forward to the published UI port (typically frontend `:3000` or all-in-one `:80`). Do **not** publish the backend API port to the internet just for Discord.
+On the published images, `/api` is already proxied to the backend by the frontend/all-in-one nginx. Terminate TLS at your outer reverse proxy and forward to the published UI port:
 
-Leave the Discord **Interactions Endpoint URL** empty until `DISCORD_INTERACTIONS_ENABLED=true` and the backend has been restarted with a valid `DISCORD_PUBLIC_KEY`. When the feature is disabled, the manager does not mount the interactions route, so Discord’s URL verification PING would fail.
+- Split frontend: host port `3000` → container `80` by default in `docker-compose.yml`
+- All-in-one: host `${HOST_PORT:-3000}` → container `80` (not host port 80 unless you set `HOST_PORT=80`)
+
+Do **not** publish the backend API port to the internet just for Discord.
+
+Leave the Discord **Interactions Endpoint URL** empty until `DISCORD_INTERACTIONS_ENABLED=true` and the container has been **recreated** with a valid `DISCORD_PUBLIC_KEY`. When the feature is disabled, the manager does not mount the interactions route, so Discord’s URL verification PING would fail.
 
 Details: [HTTPS for Discord interactions](#https-for-discord-interactions).
 
 ### 5. Bind the Discord guild to a music bot
 
-Production writes use `prod-guild-bind-cli` against an **existing** `ts6webui.db` only. Working directory inside images is `/app/packages/backend`.
+Production writes use `prod-guild-bind-cli` against an **existing** `ts6webui.db` only.
 
-**Split stack** (service `backend`, container often `ts6-backend`):
+**Split** (`backend`, cwd `/app/packages/backend`):
 
 ```bash
-# Preview (no write). --operator is audit attribution, not authentication.
-docker compose exec backend node dist/discord-command/prod-guild-bind-cli.js preview-bind \
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec backend node dist/discord-command/prod-guild-bind-cli.js preview-bind \
   --database-url "file:/app/packages/backend/data/ts6webui.db" \
   --operator "YOUR_OPERATOR_LABEL" \
   --application-id "YOUR_APPLICATION_ID" \
@@ -111,7 +167,10 @@ docker compose exec backend node dist/discord-command/prod-guild-bind-cli.js pre
 Copy the printed **canonical database realpath**, then write:
 
 ```bash
-docker compose exec backend node dist/discord-command/prod-guild-bind-cli.js bind \
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec backend node dist/discord-command/prod-guild-bind-cli.js bind \
   --database-url "file:/app/packages/backend/data/ts6webui.db" \
   --confirm-database-realpath "/app/packages/backend/data/ts6webui.db" \
   --audit-log "/app/packages/backend/data/discord-guild-bind-audit.jsonl" \
@@ -124,32 +183,116 @@ docker compose exec backend node dist/discord-command/prod-guild-bind-cli.js bin
   --confirm-write
 ```
 
-**All-in-one** (service `ts6`, container `ts6-all-in-one`): same commands with `docker compose -f docker-compose.all-in-one.yml exec ts6 …` and the same in-container DB path.
+**All-in-one** (`ts6`, image cwd `/app` — set `-w /app/packages/backend`):
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend ts6 \
+  node dist/discord-command/prod-guild-bind-cli.js preview-bind \
+  --database-url "file:/app/packages/backend/data/ts6webui.db" \
+  --operator "YOUR_OPERATOR_LABEL" \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --instance-id "YOUR_INSTANCE_ID" \
+  --server-config-id YOUR_SERVER_CONFIG_ID \
+  --music-bot-id YOUR_MUSIC_BOT_ID
+```
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend ts6 \
+  node dist/discord-command/prod-guild-bind-cli.js bind \
+  --database-url "file:/app/packages/backend/data/ts6webui.db" \
+  --confirm-database-realpath "/app/packages/backend/data/ts6webui.db" \
+  --audit-log "/app/packages/backend/data/discord-guild-bind-audit.jsonl" \
+  --operator "YOUR_OPERATOR_LABEL" \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --instance-id "YOUR_INSTANCE_ID" \
+  --server-config-id YOUR_SERVER_CONFIG_ID \
+  --music-bot-id YOUR_MUSIC_BOT_ID \
+  --confirm-write
+```
 
 Notes:
 
 - `--operator` is self-declared for the audit log. Authorisation is filesystem access to the DB volume.
 - Writes require `--confirm-write`, `--confirm-database-realpath` equal to `realpath` of that file, and `--audit-log` (append-only JSONL, preflighted before mutation).
 - There is no `--allow-any-database` on this production path.
-- Status / revoke: `status` and `revoke` subcommands on the same CLI (revoke also needs the write confirms).
+- Status / revoke: `status` and `revoke` on the same CLI (revoke also needs the write confirms). Use the same `-w` / `-f` pattern as above.
 
 Do **not** use `guild-bind-cli.js` against production `ts6webui.db` — that CLI targets disposable integration databases unless `--allow-any-database` is forced (lab only).
 
-### 6. Preview guild slash-command registration
+### Bot token for registration CLIs
 
-Registration is **guild-scoped** only (`/applications/{application.id}/guilds/{guild.id}/commands`). Preview never registers globally and never deletes unrelated remote commands.
+Registration preview (`--fetch-remote`) and `apply` read `DISCORD_BOT_TOKEN` from the **process environment**. Never pass the token as a CLI argument.
 
-`docker compose exec` does **not** forward arbitrary variables from your shell. Pass the bot token with `-e` for any command that talks to Discord (`--fetch-remote` or `apply`). Prefer a one-shot env injection over baking `DISCORD_BOT_TOKEN` into the long-running backend service environment when you only need it for registration.
+`docker compose exec` does not forward arbitrary host variables. Use `-e DISCORD_BOT_TOKEN` **without** `=value` so Compose forwards an already-exported host variable. Do **not** use `-e DISCORD_BOT_TOKEN=secret` — that puts the secret in process arguments and often shell history.
+
+Bash-compatible interactive workflow:
 
 ```bash
-# Offline plan (no Discord HTTP)
-docker compose exec backend node dist/discord-command/slash-register-cli.js preview \
+set +x
+read -r -s -p 'Discord bot token: ' DISCORD_BOT_TOKEN
+printf '\n'
+export DISCORD_BOT_TOKEN
+# … run compose exec -e DISCORD_BOT_TOKEN … commands …
+unset DISCORD_BOT_TOKEN
+```
+
+Always `unset DISCORD_BOT_TOKEN` afterwards, including when a command fails. Forwarding reduces command-line exposure; it does not remove all privileged process/environment visibility on the host or in the one-shot container process.
+
+### 6. Preview guild slash-command registration
+
+Registration is **guild-scoped** only. Preview never registers globally and never deletes unrelated remote commands.
+
+**Split — offline plan (no Discord HTTP):**
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec backend node dist/discord-command/slash-register-cli.js preview \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID"
+```
 
-# Compare against live guild commands (GET only).
-# -e NAME=value injects into the one-shot process; host env is not forwarded automatically.
-docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+**Split — compare against live guild commands (GET only):**
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec -e DISCORD_BOT_TOKEN backend \
+  node dist/discord-command/slash-register-cli.js preview \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --fetch-remote
+```
+
+**All-in-one — offline plan:**
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend ts6 \
+  node dist/discord-command/slash-register-cli.js preview \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID"
+```
+
+**All-in-one — live preview:**
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend -e DISCORD_BOT_TOKEN ts6 \
   node dist/discord-command/slash-register-cli.js preview \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID" \
@@ -162,17 +305,27 @@ Inspect create / update / unchanged / collisions. Resolve collisions before appl
 
 Apply re-fetches the current guild command list, then `POST`s upserts **by name** only for the names you list. It never uses the global commands endpoint, never bulk `PUT`s, and never `DELETE`s unrelated remotes.
 
+**Split:**
+
 ```bash
-# Example: register a first set of commands (creates only — no same-name overwrite flag needed)
-docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec -e DISCORD_BOT_TOKEN backend \
   node dist/discord-command/slash-register-cli.js apply \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID" \
   --names "ts,play,queue,nowplaying,pause,resume,skip,stop,volume,playlist,radio" \
   --confirm-apply
+```
 
-# Same-name schema updates require an extra confirmation
-docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
+Same-name schema updates:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discord-commands.example.yml \
+  exec -e DISCORD_BOT_TOKEN backend \
   node dist/discord-command/slash-register-cli.js apply \
   --application-id "YOUR_APPLICATION_ID" \
   --guild-id "YOUR_GUILD_ID" \
@@ -181,8 +334,34 @@ docker compose exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" backend \
   --confirm-same-name-overwrite
 ```
 
-**All-in-one** (service `ts6`): same commands with  
-`docker compose -f docker-compose.all-in-one.yml exec -e DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN" ts6 …`.
+**All-in-one:**
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend -e DISCORD_BOT_TOKEN ts6 \
+  node dist/discord-command/slash-register-cli.js apply \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --names "ts,play,queue,nowplaying,pause,resume,skip,stop,volume,playlist,radio" \
+  --confirm-apply
+```
+
+```bash
+docker compose \
+  -f docker-compose.all-in-one.yml \
+  -f docker-compose.discord-commands.all-in-one.example.yml \
+  exec -w /app/packages/backend -e DISCORD_BOT_TOKEN ts6 \
+  node dist/discord-command/slash-register-cli.js apply \
+  --application-id "YOUR_APPLICATION_ID" \
+  --guild-id "YOUR_GUILD_ID" \
+  --names "play" \
+  --confirm-apply \
+  --confirm-same-name-overwrite
+```
+
+Then `unset DISCORD_BOT_TOKEN` on the host.
 
 Required before any write:
 
@@ -192,23 +371,15 @@ Required before any write:
 | `--names a,b,…` | Nonempty list of **supported** command names only |
 | `--confirm-apply` | Separate confirmation that this is not a dry run |
 | `--confirm-same-name-overwrite` | Required when the live plan would update an existing same-name command |
-| `DISCORD_BOT_TOKEN` in process env | Never pass the token as a CLI argument |
+| `DISCORD_BOT_TOKEN` forwarded via `-e DISCORD_BOT_TOKEN` | Never `=value` on the command line |
 
-Partial success (some names written, others errored) exits nonzero and prints `PARTIAL`. Re-running after a successful apply is idempotent for unchanged names (skipped; no extra POSTs).
-
-Protections:
-
-- No global registration.
-- No bulk overwrite of the entire guild command set.
-- No DELETE of unrelated remote commands.
-- Unknown names are refused before Discord writes.
-- Collisions are refused.
+Partial success (some names written, others errored) exits nonzero and prints `PARTIAL`. Re-running after a successful apply is idempotent for unchanged names.
 
 ### 8. Enable interactions
 
 1. Confirm public HTTPS already reaches `/api` on the manager.
-2. Set `DISCORD_INTERACTIONS_ENABLED=true` on the backend / all-in-one service (public key and application id must already be set).
-3. Restart the service.
+2. Set `DISCORD_INTERACTIONS_ENABLED=true` in the host Compose `.env` (overlay already maps it into the container).
+3. **Recreate** the service so the new environment is applied (`up -d --force-recreate …` as in [§3](#3-pass-runtime-discord-settings-into-compose)). A plain restart is not enough for Compose env changes.
 4. In the Discord portal, set **Interactions Endpoint URL** to `https://YOUR_PUBLIC_HOST/api/discord/interactions` and save (Discord sends a signed PING).
 5. In Discord, run `/ts help` and a harmless read-only command such as `/ts online` (requires a viewer role).
 
@@ -216,28 +387,26 @@ If enablement fails closed (missing/invalid public key), the endpoint refuses tr
 
 ### 9. Disable or revoke safely
 
-1. Set `DISCORD_INTERACTIONS_ENABLED=false` (or unset) and restart — inbound interactions stop being served as an enabled feature.
-2. Optionally clear the Interactions Endpoint URL in the Discord portal.
-3. Revoke the guild binding with `prod-guild-bind-cli.js revoke` (same realpath + audit + `--confirm-write` requirements).
-4. Rotate or delete the bot token if the integration is retired.
-5. Remove the bot from the guild if it should no longer appear there.
+1. Set `DISCORD_INTERACTIONS_ENABLED=false` in host `.env`, recreate the service, and optionally clear the Interactions Endpoint URL in the Discord portal.
+2. Revoke the guild binding with `prod-guild-bind-cli.js revoke` (same realpath + audit + `--confirm-write`, and the same `-w` / `-f` patterns as bind).
+3. Rotate or delete the bot token if the integration is retired.
+4. Remove the bot from the guild if it should no longer appear there.
 
 ## HTTPS for Discord interactions
 
 Discord requires a publicly reachable HTTPS endpoint. Recommended shape:
 
 1. Outer reverse proxy terminates TLS for `YOUR_PUBLIC_HOST`.
-2. Proxy `/` (and `/api`, `/ws` as already documented) to the **frontend** or **all-in-one** published port — not to a raw backend publish on the internet.
+2. Proxy `/` (and `/api`, `/ws` as already documented) to the **frontend** or **all-in-one** published host port (`3000` by default; all-in-one uses `${HOST_PORT:-3000}` → container `80`) — not to a raw backend publish on the internet.
 3. Bundled nginx already forwards `/api` to the backend, so `/api/discord/interactions` reaches Node without a special Discord-only location.
-4. Set `TRUST_PROXY` so the backend trusts your reverse proxy hop(s); see [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits). Discord interaction rate limits use the same client-address helpers.
+4. Set `TRUST_PROXY` in the Discord overlay so the backend trusts your reverse proxy hop(s); see [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits).
 5. Prefer edge request limiting / WAF rules on `POST /api/discord/interactions` in addition to in-app budgets.
 
 Lab-only path filters used during isolated staging are **not** part of the published deployment and must not be relied on.
 
-Example outer NGINX fragment (TLS termination assumed elsewhere or on this server):
+Example outer NGINX fragment (TLS termination assumed elsewhere or on this server; adjust the upstream port to match `${HOST_PORT:-3000}`):
 
 ~~~nginx
-# Forward the public site to the published frontend / all-in-one port.
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -247,11 +416,14 @@ location / {
 }
 ~~~
 
-Keep WebSocket upgrade configuration for `/ws` as in [Reverse proxy](reverse-proxy.md). No extra Discord-specific path is required beyond ordinary `/api` proxying.
+Keep WebSocket upgrade configuration for `/ws` as in [Reverse proxy](reverse-proxy.md).
 
 ## Production CLI reference
 
-All commands below assume the image working directory `/app/packages/backend` (true for `ghcr.io/uniskela/ts6-manager/backend` and the backend tree inside all-in-one).
+| Layout | How to invoke |
+|--------|----------------|
+| Split `backend` | `docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml exec [ -e DISCORD_BOT_TOKEN ] backend node dist/discord-command/…` |
+| All-in-one `ts6` | `… -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml exec -w /app/packages/backend [ -e DISCORD_BOT_TOKEN ] ts6 node dist/discord-command/…` |
 
 | Artifact | Discord API? | DB? | Purpose |
 |----------|--------------|-----|---------|
@@ -260,7 +432,7 @@ All commands below assume the image working directory `/app/packages/backend` (t
 | `dist/discord-command/guild-bind-cli.js` | No | Isolated INT DBs | Lab/disposable bindings only |
 | `dist/discord-command/integration-readiness-cli.js` | No | No | Config readiness checklist (lab/dev) |
 
-`DISCORD_BOT_TOKEN` is an **operator registration** credential. Inbound interaction verification uses `DISCORD_PUBLIC_KEY` only. You do not need the bot token in the long-running backend env for signature checks.
+`DISCORD_BOT_TOKEN` is an **operator registration** credential. Inbound interaction verification uses `DISCORD_PUBLIC_KEY` only.
 
 Compose service names:
 
@@ -269,15 +441,13 @@ Compose service names:
 | Split (`docker-compose.yml`) | `backend` | `ts6-backend` |
 | All-in-one (`docker-compose.all-in-one.yml`) | `ts6` | `ts6-all-in-one` |
 
-Database URL in published compose files: `file:/app/packages/backend/data/ts6webui.db`.
-
 ## Known limitations
 
 - Replay protection for interaction ids is **in-process** (not shared across replicas).
 - Large HTTP floods still need **edge** protection.
 - `/ts bridge` reports unavailable without a released voice-bridge worker (by design while Path A Commands & Radio ships without D1).
 - Discord users are not TeamSpeak identities; media-group rules that key on TS uids will not treat Discord callers as channel members.
-- Slash apply is guild-scoped and name-listed only; multi-replica interaction-id replay remains in-process.
+- Slash apply is guild-scoped and name-listed only.
 
 ## Related docs
 

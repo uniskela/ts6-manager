@@ -41,7 +41,7 @@ Advanced self-hosted Discord slash commands (not one-click onboarding). Off by d
 | `DISCORD_INSTANCE_ID` | `local` | Must match `DiscordGuildBinding.instanceId` for this manager process. Prevents cross-instance bot fallback |
 | `DISCORD_VIEWER_ROLE_IDS` | empty (fail closed) | Comma-separated Discord role snowflakes allowed to run viewer commands. Empty → no viewers |
 | `DISCORD_ADMIN_ROLE_IDS` | empty (fail closed) | Comma-separated Discord role snowflakes allowed to run admin commands. Discord Administrator alone does not grant these |
-| `DISCORD_BOT_TOKEN` | empty | **Secret.** Bot token for the Applications Commands HTTP API (registration dry-run `--fetch-remote` / future apply). Not used to verify inbound interaction signatures. Prefer injecting only for operator CLI runs |
+| `DISCORD_BOT_TOKEN` | empty | **Secret.** Bot token for the Applications Commands HTTP API (`slash-register-cli` `--fetch-remote` / `apply`). Not used to verify inbound interaction signatures. Inject only for one-shot operator CLI runs via `docker compose exec -e DISCORD_BOT_TOKEN` (forward an exported host var; never `-e DISCORD_BOT_TOKEN=value`). Do not put it in the long-running service environment |
 
 Operator-only CLIs (guild bind, registration preview) also need filesystem access to `DATABASE_URL` / audit paths; those flags are not separate env vars. See [Discord Commands & Radio](discord-commands.md#production-cli-reference).
 
