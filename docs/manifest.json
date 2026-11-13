@@ -98,6 +98,13 @@
       "kind": "doc"
     },
     {
+      "source": "docs/public/discord-commands.md",
+      "slug": "discord-commands",
+      "title": "Discord Commands & Radio",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
       "source": "docs/public/native-sidecar.md",
       "slug": "native-sidecar",
       "title": "Native media sidecar",
@@ -128,7 +135,7 @@
     {
       "source": "docs/public/discord-bridge.md",
       "slug": "discord-bridge",
-      "title": "Discord bridge",
+      "title": "Discord voice bridge",
       "group": "Security & compatibility",
       "kind": "doc"
     },

@@ -81,6 +81,10 @@ If the preview stays on “Connecting to stream…” and then reports an ICE fa
 
 Terminate HTTPS at the reverse proxy unless you have a different deliberate architecture. Keep TeamSpeak Query and sidecar management endpoints restricted to trusted/internal networks.
 
+### Discord interactions
+
+Discord slash-command interactions use the same public HTTPS origin: `POST /api/discord/interactions` is served through the normal `/api` proxy to the backend. Do not publish the backend port on the internet solely for Discord. Configure `TRUST_PROXY` for your outer proxy hop(s). Operator setup: [Discord Commands & Radio](discord-commands.md#https-for-discord-interactions).
+
 ## Authenticating proxies
 
 Cloudflare Access, oauth2-proxy, Authelia and similar gateways renew their
