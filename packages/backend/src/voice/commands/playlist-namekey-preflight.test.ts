@@ -50,35 +50,85 @@ async function playlistColumns(dbPath: string): Promise<string[]> {
 }
 
 /**
- * Realistic pre-nameKey database: current schema via db push, then strip nameKey
- * column/indexes/triggers (legacy v1.11.x shape) and seed servers/bots/playlists.
+ * Build a disposable pre-nameKey (legacy) SQLite DB with raw DDL only.
+ * Avoids prisma db push + RENAME races (T-1): one connection, no schema strip.
+ * Columns include required fields so a later db push can add nameKey safely.
  */
 async function buildLegacyFixture(
   dbPath: string,
   playlists: Array<{ name: string; serverConfigId: number | null }>,
 ): Promise<void> {
-  const url = `file:${dbPath}`;
-  execFileSync(process.execPath, [prismaCli, 'db', 'push', '--skip-generate', '--schema', schemaPath], {
-    env: { ...process.env, DATABASE_URL: url },
-    stdio: 'pipe',
-  });
+  await mkdir(path.dirname(dbPath), { recursive: true });
+  // Unique file per call; connection_limit=1 avoids multi-handle DDL races.
+  const url = `file:${dbPath}?connection_limit=1`;
   const prisma = new PrismaClient({ datasources: { db: { url } } });
   try {
-    for (const name of [
-      'Playlist_server_nameKey_unique',
-      'Playlist_shared_nameKey_unique',
-      'Playlist_nameKey_idx',
-      'Playlist_nameKey_require_insert',
-      'Playlist_nameKey_require_update',
-      'Playlist_nameKey_block_cross_insert',
-      'Playlist_nameKey_block_cross_update',
-    ]) {
-      await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "${name}"`);
-      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${name}"`);
-    }
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=OFF`);
     await prisma.$executeRawUnsafe(`
-      CREATE TABLE "Playlist_pre_namekey" (
-        "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+      CREATE TABLE "TsServerConfig" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "name" TEXT NOT NULL,
+        "host" TEXT NOT NULL,
+        "webqueryPort" INTEGER NOT NULL DEFAULT 10080,
+        "apiKey" TEXT NOT NULL,
+        "useHttps" BOOLEAN NOT NULL DEFAULT false,
+        "sshPort" INTEGER NOT NULL DEFAULT 10022,
+        "sshUsername" TEXT,
+        "sshPassword" TEXT,
+        "sshHostKeyFingerprint" TEXT,
+        "enabled" BOOLEAN NOT NULL DEFAULT true,
+        "isDemo" BOOLEAN NOT NULL DEFAULT false,
+        "metricsEnabled" BOOLEAN NOT NULL DEFAULT false,
+        "metricsPort" INTEGER NOT NULL DEFAULT 9187,
+        "metricsHost" TEXT,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "MusicBot" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "name" TEXT NOT NULL,
+        "serverConfigId" INTEGER NOT NULL,
+        "nickname" TEXT NOT NULL DEFAULT 'MusicBot',
+        "serverPassword" TEXT,
+        "defaultChannel" TEXT,
+        "channelPassword" TEXT,
+        "commandChannelIds" TEXT,
+        "virtualServerId" INTEGER NOT NULL DEFAULT 1,
+        "voicePort" INTEGER NOT NULL DEFAULT 9987,
+        "volume" INTEGER NOT NULL DEFAULT 50,
+        "identityData" TEXT,
+        "avatarMode" TEXT NOT NULL DEFAULT 'none',
+        "avatarFile" TEXT,
+        "avatarMd5" TEXT,
+        "autoStart" BOOLEAN NOT NULL DEFAULT false,
+        "automationSettings" TEXT,
+        "automationState" TEXT,
+        "streamPreset" TEXT NOT NULL DEFAULT '720p',
+        "sidecarPort" INTEGER NOT NULL DEFAULT 9800,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "Song" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "title" TEXT NOT NULL,
+        "artist" TEXT,
+        "duration" REAL,
+        "filePath" TEXT NOT NULL,
+        "source" TEXT NOT NULL DEFAULT 'local',
+        "sourceUrl" TEXT,
+        "fileSize" INTEGER,
+        "serverConfigId" INTEGER NOT NULL,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Legacy Playlist: no nameKey column (and no uniqueness indexes/triggers).
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "Playlist" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
         "name" TEXT NOT NULL,
         "mode" TEXT NOT NULL DEFAULT 'local',
         "remoteAccess" TEXT NOT NULL DEFAULT 'hidden',
@@ -88,27 +138,29 @@ async function buildLegacyFixture(
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    // Disable FKs so DROP is not blocked by PlaylistSong / other refs during rebuild.
-    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=OFF`);
-    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "Playlist"`);
-    await prisma.$executeRawUnsafe(`ALTER TABLE "Playlist_pre_namekey" RENAME TO "Playlist"`);
-    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=ON`);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "PlaylistSong" (
+        "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "playlistId" INTEGER NOT NULL,
+        "songId" INTEGER NOT NULL,
+        "position" INTEGER NOT NULL DEFAULT 0
+      )
+    `);
 
-    await prisma.tsServerConfig.create({
-      data: { id: 1, name: 'Alpha', host: 'alpha.test', apiKey: 'k1' },
-    });
-    await prisma.tsServerConfig.create({
-      data: { id: 2, name: 'Beta', host: 'beta.test', apiKey: 'k2' },
-    });
-    await prisma.musicBot.create({
-      data: { id: 10, serverConfigId: 1, name: 'BotA' },
-    });
-    await prisma.musicBot.create({
-      data: { id: 20, serverConfigId: 2, name: 'BotB' },
-    });
-    const song = await prisma.song.create({
-      data: { title: 'Track One', filePath: '/tmp/track-one', source: 'local', serverConfigId: 1 },
-    });
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "TsServerConfig" ("id", "name", "host", "apiKey") VALUES
+        (1, 'Alpha', 'alpha.test', 'k1'),
+        (2, 'Beta', 'beta.test', 'k2')`,
+    );
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "MusicBot" ("id", "serverConfigId", "name") VALUES
+        (10, 1, 'BotA'),
+        (20, 2, 'BotB')`,
+    );
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Song" ("id", "title", "filePath", "source", "serverConfigId")
+       VALUES (1, 'Track One', '/tmp/track-one', 'local', 1)`,
+    );
     for (const p of playlists) {
       await prisma.$executeRawUnsafe(
         `INSERT INTO "Playlist" ("name", "mode", "remoteAccess", "serverConfigId", "musicBotId") VALUES (?, 'stream', 'hidden', ?, ?)`,
@@ -119,10 +171,10 @@ async function buildLegacyFixture(
     }
     if (playlists.length) {
       await prisma.$executeRawUnsafe(
-        `INSERT INTO "PlaylistSong" ("playlistId", "songId", "position") VALUES (1, ?, 0)`,
-        song.id,
+        `INSERT INTO "PlaylistSong" ("playlistId", "songId", "position") VALUES (1, 1, 0)`,
       );
     }
+    await prisma.$executeRawUnsafe(`PRAGMA foreign_keys=ON`);
   } finally {
     await prisma.$disconnect();
   }
@@ -146,17 +198,18 @@ function runApplySchema(
 }
 
 function runCli(
-  flag: '--preview' | '--preflight' | '--confirm-finalize',
+  flags: string | string[],
   databaseUrl: string,
   extraEnv: NodeJS.ProcessEnv = {},
 ) {
+  const args = Array.isArray(flags) ? flags : [flags];
   const env = { ...process.env, DATABASE_URL: databaseUrl, ...extraEnv };
   // Prefer compiled CLI when present (published-image path); else tsx source.
   try {
     accessSync(cliJs);
-    return spawnSync(process.execPath, [cliJs, flag], { env, encoding: 'utf8' });
+    return spawnSync(process.execPath, [cliJs, ...args], { env, encoding: 'utf8' });
   } catch {
-    return spawnSync(process.execPath, ['--import', 'tsx', cliTs, flag], { env, encoding: 'utf8' });
+    return spawnSync(process.execPath, ['--import', 'tsx', cliTs, ...args], { env, encoding: 'utf8' });
   }
 }
 
@@ -542,20 +595,22 @@ describe('F1 R1 DATABASE_URL preflight targeting', () => {
   });
 
   it('legacy database at relative DATABASE_URL (schema-dir semantics) is checked', async () => {
-    const relDir = path.join(schemaDir, 'f1-rel-fixture');
+    // Unique dir under prisma/ so relative file: URLs resolve here without colliding (T-2).
+    const relDir = await mkdtemp(path.join(schemaDir, 'f1-rel-'));
+    const relName = path.basename(relDir);
     const relDb = path.join(relDir, 'legacy.db');
     const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-rel-'));
     const dataDir = path.join(root, 'data');
     await mkdir(dataDir, { recursive: true });
-    await mkdir(relDir, { recursive: true });
     try {
       await buildLegacyFixture(relDb, [{ name: 'RelOk', serverConfigId: 1 }]);
-      const resolved = resolvePrismaSqliteDatabasePath('file:./f1-rel-fixture/legacy.db', schemaDir);
+      const relUrl = `file:./${relName}/legacy.db`;
+      const resolved = resolvePrismaSqliteDatabasePath(relUrl, schemaDir);
       assert.equal(resolved.ok, true);
       if (resolved.ok) assert.equal(resolved.absolutePath, relDb);
 
       const applied = runApplySchema(dataDir, path.join(dataDir, 'ts6webui.db'), {
-        databaseUrl: 'file:./f1-rel-fixture/legacy.db',
+        databaseUrl: relUrl,
       });
       assert.equal(applied.status, 0, applied.stderr || applied.stdout);
       assert.equal((await playlistColumns(relDb)).includes('nameKey'), true);
@@ -617,11 +672,96 @@ describe('F1 R1 DATABASE_URL preflight targeting', () => {
     await mkdir(dataDir, { recursive: true });
     const dbFile = path.join(dataDir, 'ts6webui.db');
     try {
-      const pre = runCli('--preflight', `file:${dbFile}`, { TS6_SCHEMA_DB_FILE: dbFile });
+      // Manual check without --allow-absent must fail (R2-a).
+      const manual = runCli('--preflight', `file:${dbFile}`, { TS6_SCHEMA_DB_FILE: dbFile });
+      assert.notEqual(manual.status, 0);
+      assert.match(manual.stderr + manual.stdout, /not found|not checked/i);
+      assert.equal(manual.stdout.includes('compatible=true'), false);
+      // Startup path uses --allow-absent.
+      const pre = runCli(['--preflight', '--allow-absent'], `file:${dbFile}`, { TS6_SCHEMA_DB_FILE: dbFile });
       assert.equal(pre.status, 0, pre.stderr || pre.stdout);
       assert.match(pre.stdout, /fresh install|compatible=true/i);
+      try {
+        accessSync(dbFile);
+        assert.fail('absent preflight must not create the database file');
+      } catch {
+        // expected — file must still be missing
+      }
       const applied = runApplySchema(dataDir, dbFile);
       assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('F1 R2-a absent-file operator checks', () => {
+  it('manual --preflight / --preview on missing file exit non-zero without creating files', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-absent-'));
+    const missing = path.join(root, 'nope.db');
+    try {
+      for (const flag of ['--preflight', '--preview'] as const) {
+        const result = runCli(flag, `file:${missing}`);
+        assert.notEqual(result.status, 0, flag);
+        assert.match(result.stderr + result.stdout, /not found|not checked/i);
+        assert.equal((result.stdout + result.stderr).includes('compatible=true'), false);
+      }
+      const { readdirSync } = await import('node:fs');
+      assert.deepEqual(readdirSync(root), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('manual --preflight on a valid legacy database reports the real result', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-manual-ok-'));
+    const dbFile = path.join(root, 'ok.db');
+    try {
+      await buildLegacyFixture(dbFile, [{ name: 'Solo', serverConfigId: 1 }]);
+      const ok = runCli('--preflight', `file:${dbFile}`);
+      assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+      assert.match(ok.stdout, /compatible=true/);
+
+      await buildLegacyFixture(path.join(root, 'bad.db'), [
+        { name: 'X', serverConfigId: 1 },
+        { name: 'x', serverConfigId: 1 },
+      ]);
+      const bad = runCli('--preflight', `file:${path.join(root, 'bad.db')}`);
+      assert.notEqual(bad.status, 0);
+      assert.match(bad.stdout, /compatible=false/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('F1 T-1 concurrent legacy fixtures', () => {
+  it('repeated and concurrent fixture creation succeeds without rename races', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ts6-f1-concurrent-'));
+    try {
+      const paths = Array.from({ length: 6 }, (_, i) => path.join(root, `fix-${i}.db`));
+      await Promise.all(paths.map((p, i) => buildLegacyFixture(p, [
+        { name: `P${i}`, serverConfigId: 1 },
+        { name: `Q${i}`, serverConfigId: 2 },
+      ])));
+      for (const p of paths) {
+        assert.equal((await playlistColumns(p)).includes('nameKey'), false);
+        const prisma = new PrismaClient({ datasources: { db: { url: `file:${p}` } } });
+        try {
+          const n = Number((await prisma.$queryRawUnsafe<Array<{ c: number | bigint }>>(
+            `SELECT COUNT(*) AS c FROM "Playlist"`,
+          ))[0].c);
+          assert.equal(n, 2);
+        } finally {
+          await prisma.$disconnect();
+        }
+      }
+      // Second wave against new unique paths (repeatability).
+      const more = Array.from({ length: 4 }, (_, i) => path.join(root, `again-${i}.db`));
+      await Promise.all(more.map((p) => buildLegacyFixture(p, [{ name: 'Solo', serverConfigId: 1 }])));
+      for (const p of more) {
+        assert.equal((await playlistColumns(p)).includes('nameKey'), false);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

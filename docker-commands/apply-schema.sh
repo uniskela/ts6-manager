@@ -74,20 +74,22 @@ if [ -z "$NAMEKEY_CLI" ]; then
 fi
 
 run_namekey_cli() {
-  flag="$1"
   if [ "${NAMEKEY_CLI%.ts}" != "$NAMEKEY_CLI" ]; then
-    node --import tsx "$NAMEKEY_CLI" "$flag"
+    node --import tsx "$NAMEKEY_CLI" "$@"
   else
-    node "$NAMEKEY_CLI" "$flag"
+    node "$NAMEKEY_CLI" "$@"
   fi
 }
 
 # F1: always preflight the DATABASE_URL target BEFORE prisma db push.
-# Absent DB → fresh install (CLI exits 0 without creating the file).
+# --allow-absent is startup-only: a missing file is a genuine fresh install.
+# Manual operator checks omit that flag and must not report a false PASS.
 # Existing incompatible playlists → refuse; schema and rows stay unchanged.
 # DB_FILE existence must not gate this — DATABASE_URL can point elsewhere.
+# MODE is derived from DB_FILE / schema-version markers for logging only;
+# Prisma open/push always use DATABASE_URL.
 echo "[schema] Preflight: playlist nameKey compatibility (read-only, before db push)"
-if ! run_namekey_cli --preflight; then
+if ! run_namekey_cli --preflight --allow-absent; then
   echo "[schema] Playlist name compatibility preflight failed — database left unchanged." >&2
   echo "[schema] Resolve duplicate/blank playlist names on a copy, or restore backup and stay on the previous image." >&2
   exit 1

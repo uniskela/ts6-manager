@@ -4,18 +4,18 @@
  * Usage (from packages/backend):
  *   node dist/voice/commands/playlist-namekey-finalize-cli.js --preview
  *   node dist/voice/commands/playlist-namekey-finalize-cli.js --preflight
+ *   node dist/voice/commands/playlist-namekey-finalize-cli.js --preflight --allow-absent
  *   node dist/voice/commands/playlist-namekey-finalize-cli.js --confirm-finalize
  *
  * Development (tsx available):
  *   node --import tsx src/voice/commands/playlist-namekey-finalize-cli.ts --preview
  *
- * Container start uses the compiled dist entry via apply-schema.sh.
- * --preflight / --preview are read-only and safe on legacy DBs without nameKey.
- * Never renames, merges, or deletes playlists. Conflicts refuse finalisation.
+ * Container start uses the compiled dist entry via apply-schema.sh with
+ * `--preflight --allow-absent` so a genuine fresh install can proceed.
+ * Manual operator checks must NOT pass `--allow-absent`: a missing target
+ * exits non-zero and never reports compatible=true.
  *
- * Preflight inspects the database selected by DATABASE_URL (Prisma path rules).
- * An absent file is treated as a fresh install unless DB_FILE / TS6_SCHEMA_DB_FILE
- * points at a different existing database (fail closed).
+ * Never renames, merges, or deletes playlists. Conflicts refuse finalisation.
  */
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -70,9 +70,14 @@ async function main(): Promise<void> {
   const preview = argv.includes('--preview');
   const preflight = argv.includes('--preflight');
   const confirm = argv.includes('--confirm-finalize');
+  const allowAbsent = argv.includes('--allow-absent');
   const modeCount = [preview, preflight, confirm].filter(Boolean).length;
   if (modeCount !== 1) {
     console.error('Specify exactly one of --preview, --preflight, or --confirm-finalize');
+    process.exit(2);
+  }
+  if (allowAbsent && !preflight) {
+    console.error('--allow-absent is only valid with --preflight (startup fresh-install path)');
     process.exit(2);
   }
 
@@ -96,7 +101,14 @@ async function main(): Promise<void> {
       console.error(`[nameKey] refusing finalisation; database file is missing: ${target.absolutePath}`);
       process.exit(1);
     }
-    console.log(`[nameKey] ${preview ? 'preview' : 'preflight'}`);
+    // Manual operator checks must never report a false compatibility PASS.
+    if (!allowAbsent) {
+      console.error(`[nameKey] database not found: ${target.absolutePath}`);
+      console.error('[nameKey] Target database was not checked (file does not exist).');
+      console.error('[nameKey] Create/copy the database first, or for container fresh-install startup use --allow-absent.');
+      process.exit(1);
+    }
+    console.log('[nameKey] preflight');
     console.log(`database=${target.absolutePath}`);
     console.log('playlists=0');
     console.log('conflicts=0');

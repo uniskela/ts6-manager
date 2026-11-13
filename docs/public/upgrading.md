@@ -208,9 +208,15 @@ For an existing persistent database the startup path:
 
 ### Preview / preflight playlist name compatibility (published images)
 
-Published images ship the compiled CLI (no TypeScript/`tsx` required). Prefer `--preflight` (or `--preview`) against a **copy** of the database before upgrading. Exit code `0` means compatible; non-zero prints a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) with playlist ids and names.
+Published images ship the compiled CLI (no TypeScript/`tsx` required). Prefer `--preflight` (or `--preview`) against a **copy** of the database before upgrading.
 
-`docker compose exec` only works while the backend is running. After a refused upgrade the backend often crash-loops, so use a **one-off** `compose run` that does not start sidecar/frontend:
+- Exit `0` with `compatible=true` → playlist names are safe for this upgrade.
+- Exit non-zero with a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) → fix names before upgrading.
+- Exit non-zero with `database not found` / `was not checked` → the target file is missing or mistyped; the CLI did **not** treat that as compatible.
+
+Do **not** pass `--allow-absent` for operator checks. That flag is only for container startup on a genuine fresh install.
+
+`docker compose exec` only works while the backend is running. After a refused upgrade the backend often crash-loops, so use a **one-off** `compose run` that does not start sidecar/frontend (this still mounts the compose data volume — fine for inspecting the live path, not for an isolated copy check):
 
 **Split stack** (`docker-compose.yml` service `backend`; working directory `/app/packages/backend`):
 
@@ -228,30 +234,30 @@ docker compose -f docker-compose.all-in-one.yml \
   --preflight
 ```
 
-Both commands inherit the compose `DATABASE_URL` and data volume. They do not rewrite playlists.
+#### Preflight against a copy (recommended, isolated)
 
-#### Preflight against a copy (recommended)
+1. **Stop** the backend (or all-in-one) so SQLite is quiescent, **or** use SQLite’s online backup API against a running file (preferred over copying a live `*.db` while writers are active).
+2. Produce a consistent copy into a disposable host directory (for example `./db-check/ts6webui.db`). With the app stopped you may copy `ts6webui.db` together with any `ts6webui.db-wal` / `ts6webui.db-shm` beside it. With the app still running, prefer `sqlite3 /path/to/ts6webui.db ".backup './db-check/ts6webui.db'"` so WAL state is folded into one file.
+3. Run a **standalone** container that mounts **only** that directory read-only. Do not use `docker compose run` here — compose still attaches the production data volume.
 
-1. **Stop** the backend (or all-in-one) so SQLite is quiescent.
-2. Copy `ts6webui.db` **and** any `ts6webui.db-wal` / `ts6webui.db-shm` beside it into a disposable directory on the host (for example `./db-check/`).
-3. Run a one-off container that mounts **only** that directory read-only and points `DATABASE_URL` at the copy. Do not mount the live data volume for write access.
-
-Split stack example (adjust the host path):
+Replace the image tag with the backend image that contains this release’s compiled CLI (for example `ghcr.io/uniskela/ts6-manager/backend:<this-release-tag>`):
 
 ```bash
-docker compose run --rm --no-deps --no-TTY \
+docker run --rm \
+  --network none \
   --entrypoint node \
   -e DATABASE_URL=file:/check/ts6webui.db \
   -v "$PWD/db-check:/check:ro" \
-  backend \
-  dist/voice/commands/playlist-namekey-finalize-cli.js --preflight
+  ghcr.io/uniskela/ts6-manager/backend:<this-release-tag> \
+  dist/voice/commands/playlist-namekey-finalize-cli.js \
+  --preflight
 ```
 
-Confirm the log line `database=/check/ts6webui.db` (or your copy path) so the CLI read the intended file. The production volume is not mounted for writes.
+Confirm the log line `database=/check/ts6webui.db`. A mistyped mount or missing file exits non-zero with “database not found” / “was not checked” and never prints `compatible=true`. This command uses no production volume, no secret mounts, no host network, and no Docker socket.
 
 ### Backup, restore, and rollback (schema)
 
-1. **Backup** before upgrading: stop the backend, then copy `ts6webui.db` plus any `-wal`/`-shm` journal files and the data volume.
+1. **Backup** before upgrading: stop the backend (or use `sqlite3 … ".backup …"`), then keep a consistent copy of `ts6webui.db` (plus `-wal`/`-shm` if you copied files cold) and the data volume.
 2. **Upgrade** with the new image (apply-schema runs automatically).
 
 Distinguish these outcomes:
@@ -260,19 +266,30 @@ Distinguish these outcomes:
 |-----------|----------------|------------|
 | **Failed preflight** (before `db push`) | Original schema and rows unchanged | Previous image tag can start against this database. Use the recovery steps below, or stay on the previous image. |
 | **Successful schema upgrade** (push + finalise recorded) | Newer columns/constraints present | Rollback needs the **previous image tag and the matching database backup**. Do not point an older image at the upgraded database and expect a clean start. |
-| **Partial upgrade** (an earlier build of this release — for example PR head `3f71dedb` — already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | v1.11.x does **not** create the `nameKey` schema. Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run a fixed new image so finalisation can complete. |
+| **Partial upgrade** (an earlier pre-release build of this version already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | v1.11.x does **not** create the `nameKey` schema. Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run a fixed new image so finalisation can complete. |
+
+#### Confirm a refused preflight left the database unchanged
+
+On the live data file (read-only check):
+
+```bash
+sqlite3 /path/to/ts6webui.db "PRAGMA table_info('Playlist');" | grep -F nameKey \
+  || echo "no nameKey column — schema unchanged by refused preflight"
+```
+
+Also confirm `.schema-version` (if present) still shows the previous release marker.
 
 #### Recovery after a refused preflight (database unchanged)
 
 This procedure applies **only** when preflight refused **before** schema changes (logs show preflight failure and no successful `prisma db push` for this upgrade):
 
-1. Confirm the live database was not modified (no new `nameKey` column / schema-version marker for this release).
+1. Confirm the live database was not modified (see the `PRAGMA table_info` check above).
 2. Start the **previous working image** (for example the last v1.11.x tag) against that same database.
 3. In the normal Web UI, rename conflicting playlists so each scope has a unique name after trim + case folding (and fix blank / whitespace-only names).
-4. Stop the backend and **back up** the corrected database (`ts6webui.db` plus `-wal`/`-shm`).
+4. Stop the backend and **back up** the corrected database.
 5. Retry the upgrade with the new image.
 
-If the schema was **already** mutated (partial upgrade from an earlier new-release build, or a successful push), do **not** use steps 2–3 against the mutated file as a substitute for backup restore — restore the matching pre-upgrade backup, or complete migration carefully on a copy.
+If the schema was **already** mutated (partial upgrade from an earlier pre-release build of this version, or a successful push), do **not** use steps 2–3 against the mutated file as a substitute for backup restore — restore the matching pre-upgrade backup, or complete migration carefully on a copy.
 
 Image-only rollback after a successful schema migration is **not** supported.
 
