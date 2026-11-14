@@ -1,0 +1,24 @@
+# Example Compose overlay: pass Discord Commands runtime env into all-in-one (`ts6`).
+# Copy/adapt next to your deployment; do not commit production secrets.
+#
+# Usage (both -f files every time; explicit -f disables auto-loading of
+# docker-compose.override.yml):
+#   docker compose -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml config
+#   docker compose -f docker-compose.all-in-one.yml -f docker-compose.discord-commands.all-in-one.example.yml up -d --force-recreate ts6
+#
+# Host `.env` supplies ${…} interpolation; this file must list the keys so they
+# enter the container environment.
+#
+# Do NOT put DISCORD_BOT_TOKEN here. Use one-shot CLI injection only.
+
+services:
+  ts6:
+    environment:
+      DISCORD_INTERACTIONS_ENABLED: ${DISCORD_INTERACTIONS_ENABLED:-false}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-}
+      DISCORD_INSTANCE_ID: ${DISCORD_INSTANCE_ID:-local}
+      DISCORD_VIEWER_ROLE_IDS: ${DISCORD_VIEWER_ROLE_IDS:-}
+      DISCORD_ADMIN_ROLE_IDS: ${DISCORD_ADMIN_ROLE_IDS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      LISTEN_HOST: ${LISTEN_HOST:-}

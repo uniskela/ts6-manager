@@ -46,7 +46,14 @@ import { BoundedRateLimitStore } from './utils/rate-windows.js';
 
 import { applyTrustProxy, forwardedHeaderWarning } from './trust-proxy.js';
 import { requireServerAccess } from './middleware/server-access.js';
+import {
+  createDiscordInteractionsMisconfiguredRouter,
+  createDiscordInteractionsRouter,
+  isValidDiscordPublicKeyHex,
+} from './discord-command/interactions-http.js';
+import { MemoryReplayGuard } from './discord-command/security.js';
 import { createRequire } from 'module';
+import type { Options as RateLimitOptions } from 'express-rate-limit';
 
 const require = createRequire(import.meta.url);
 const backendPkg = require('../package.json') as { version?: string };
@@ -60,6 +67,52 @@ export function createApp(): Express {
 
   app.use(helmet());
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
+
+  // Discord Interactions need the exact raw body for Ed25519. Mount before json().
+  // Disabled by default (DISCORD_INTERACTIONS_ENABLED). Adapter + follow-up are
+  // injected via app.locals — never unsigned fallback, never silent Memory follow-up.
+  //
+  // F4: split budgets so unsigned/invalid traffic cannot exhaust authenticated
+  // command capacity. clientRateKey honours TRUST_PROXY only (no arbitrary XFF).
+  // Edge/proxy saturation can still starve a shared peer — app limits are not enough.
+  const discordUnauthStore = new BoundedRateLimitStore({ capacity: 50_000 });
+  const discordAuthStore = new BoundedRateLimitStore({ capacity: 50_000 });
+  // Manual Store.init: budgets are applied inside the interactions handler after
+  // (or without) Ed25519, not via a shared pre-verify express-rate-limit middleware.
+  const discordLimitOpts = { windowMs: 60_000, limit: 120 } as RateLimitOptions;
+  discordUnauthStore.init(discordLimitOpts);
+  discordAuthStore.init(discordLimitOpts);
+  const discordRateGates = {
+    clientKey: (req: express.Request) => clientRateKey(req),
+    takeUnauthenticated(key: string): boolean {
+      return discordUnauthStore.increment(key).totalHits <= discordUnauthStore.limit;
+    },
+    takeAuthenticated(key: string): boolean {
+      return discordAuthStore.increment(key).totalHits <= discordAuthStore.limit;
+    },
+  };
+  // Interaction-id replay claims (F7): in-process only; retain through signedTs+maxAge.
+  const discordInteractionReplay = new MemoryReplayGuard();
+  if (config.discordInteractionsEnabled) {
+    if (!isValidDiscordPublicKeyHex(config.discordPublicKeyHex)) {
+      app.use('/api/discord/interactions', createDiscordInteractionsMisconfiguredRouter(discordRateGates));
+    } else {
+      app.use('/api/discord/interactions', createDiscordInteractionsRouter({
+        publicKeyHex: config.discordPublicKeyHex,
+        getAdapter: (req) => req.app.locals.discordCommandAdapter ?? null,
+        getFollowUp: (req) => req.app.locals.discordInteractionFollowUp ?? null,
+        expectedApplicationId: config.discordApplicationId || null,
+        nowMs: () => Date.now(),
+        rateGates: discordRateGates,
+        replay: discordInteractionReplay,
+      }));
+    }
+  }
+  app.locals.discordInteractionsRateLimitStore = discordAuthStore;
+  app.locals.discordInteractionsUnauthRateLimitStore = discordUnauthStore;
+  app.locals.discordInteractionsAuthRateLimitStore = discordAuthStore;
+  app.locals.discordInteractionReplay = discordInteractionReplay;
+
   // Parse remote requests separately so body-parser errors cannot echo token material.
   // Bounded stores: a flood of new addresses cannot grow limiter memory without limit.
   // Live listeners have their own store, which only verified sessions can fill,

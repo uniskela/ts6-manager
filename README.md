@@ -35,6 +35,8 @@ Start with:
 - [Video streaming](https://ts6manager.com/docs/latest/video-streaming/)
 - [Architecture](https://ts6manager.com/docs/latest/architecture/)
 - [Environment variables](https://ts6manager.com/docs/latest/environment-variables/)
+- [Discord Commands & Radio](https://ts6manager.com/docs/latest/discord-commands/) — advanced self-hosted Discord slash commands (not one-click onboarding; not the voice bridge)
+- [Radio fetcher](https://ts6manager.com/docs/latest/radio-fetcher/) — required for remote `/radio` and TeamSpeak `!radio`
 
 
 ### Using this project with AI coding agents
@@ -76,6 +78,8 @@ The bot list and one place for what every bot is doing right now: the current tr
 
 ### Music Bots
 Run multiple music bots per server. Each bot has its own queue, volume control, and playback state. Supports radio streams, YouTube, and a local music library. Admins can import stations from [Community Radio Browser](https://www.radio-browser.info/) under Media Library → Radio stations. Users in the bot's channel can control it via text commands (`!radio`, `!play`, `!vol`, etc.).
+
+Optional **Discord Commands & Radio** (advanced, self-hosted): operators can expose verified Discord slash commands against a dedicated Discord application. This is not one-click Connect Discord, not a hosted Uniskela command hub, and not Discord ↔ TeamSpeak voice bridging. Remote radio still needs the [isolated radio fetcher](docs/public/radio-fetcher.md). Setup: [Discord Commands & Radio](docs/public/discord-commands.md).
 
 ![Music Bots](docs/public/musicbots.png)
 

@@ -1,0 +1,28 @@
+# Example Compose overlay: pass Discord Commands runtime env into the split-stack
+# backend. Copy/adapt next to your deployment; do not commit production secrets.
+#
+# Usage (both -f files every time; explicit -f disables auto-loading of
+# docker-compose.override.yml):
+#   docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml config
+#   docker compose -f docker-compose.yml -f docker-compose.discord-commands.example.yml up -d --force-recreate backend
+#
+# Values below are interpolated from the Compose project environment / `.env`
+# on the host into the container. A host `.env` alone does nothing unless these
+# keys are listed under `environment:` here (or in another overlay you maintain).
+#
+# Do NOT put DISCORD_BOT_TOKEN in this file. Inject it only for one-shot
+# registration CLI runs (see docs/public/discord-commands.md).
+
+services:
+  backend:
+    environment:
+      DISCORD_INTERACTIONS_ENABLED: ${DISCORD_INTERACTIONS_ENABLED:-false}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-}
+      DISCORD_INSTANCE_ID: ${DISCORD_INSTANCE_ID:-local}
+      DISCORD_VIEWER_ROLE_IDS: ${DISCORD_VIEWER_ROLE_IDS:-}
+      DISCORD_ADMIN_ROLE_IDS: ${DISCORD_ADMIN_ROLE_IDS:-}
+      # Outer reverse-proxy hop(s). Replace with your real proxy CIDR/IP list.
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      # Optional. Leave empty for normal Docker images.
+      LISTEN_HOST: ${LISTEN_HOST:-}

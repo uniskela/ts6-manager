@@ -47,10 +47,17 @@ jobs:
         include:
           - component: backend
             dockerfile: Dockerfile.backend
+            context: .
           - component: frontend
             dockerfile: Dockerfile.frontend
+            context: .
           - component: sidecar
             dockerfile: Dockerfile.sidecar
+            context: .
+          # Linux-only radio egress helper (Landlock ABI >= 4). Not part of all-in-one.
+          - component: media-fetcher
+            dockerfile: services/media-fetcher/Dockerfile
+            context: services/media-fetcher
 
     steps:
       - name: Validate release tag
@@ -126,7 +133,7 @@ jobs:
       - name: Build and push GHCR
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.tags.outputs.list }}
@@ -274,7 +281,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        component: [backend, frontend, sidecar]
+        component: [backend, frontend, sidecar, media-fetcher]
     steps:
       - name: Detect Docker Hub credentials
         id: hub
@@ -408,7 +415,7 @@ jobs:
         run: |
           set -euo pipefail
           OWNER="${{ github.repository_owner }}"
-          for PKG in ts6-manager/backend ts6-manager/frontend ts6-manager/sidecar ts6-manager/all-in-one; do
+          for PKG in ts6-manager/backend ts6-manager/frontend ts6-manager/sidecar ts6-manager/media-fetcher ts6-manager/all-in-one; do
             ENCODED="$(printf '%s' "$PKG" | jq -sRr @uri)"
             echo "Setting visibility public for package: $PKG"
             # User-owned packages

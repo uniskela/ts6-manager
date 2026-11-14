@@ -103,6 +103,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'server_icon.upload': 'Upload server icon',
   'server_icon.delete': 'Delete server icon',
   'settings.public_url_update': 'Update public URL',
+  'discord.command': 'Discord slash command',
 };
 
 const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {
@@ -141,6 +142,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   music_bot: 'Music bot',
   channel_banner: 'Channel banner',
   server_icon: 'Server icon',
+  discord_guild: 'Discord guild',
 };
 
 const AUDIT_GRID =

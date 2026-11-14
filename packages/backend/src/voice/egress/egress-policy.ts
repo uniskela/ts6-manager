@@ -11,6 +11,13 @@ import { isNeverAllowedIP, isPrivateIP } from '../../utils/url-validator.js';
 /** Ports a media download may connect to. */
 export const MEDIA_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443]);
 
+/**
+ * Extra Icecast/Shoutcast ports radio may use, still subject to the address
+ * policy: 8000 default HTTP, 8008 alternate HTTP, 8080 common HTTP front,
+ * 8443 Icecast HTTPS. Downloads stay on 80/443 only.
+ */
+export const RADIO_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443, 8000, 8008, 8080, 8443]);
+
 /** Special-purpose ranges (RFC 6890 registries) that are never a public media host. */
 const reserved = new BlockList();
 for (const [ip, prefix] of [
@@ -78,6 +85,26 @@ export function embeddedIPv4(address: string): string | null {
 }
 
 export type RefusalClass = 'reserved' | 'private' | 'not-an-address';
+
+/**
+ * Pin every DNS answer, or none. A single forbidden address poisons the
+ * lookup so a later public answer cannot be used after a private one.
+ */
+export function pinMediaAddresses(
+  answers: string[],
+  permit?: (address: string) => boolean,
+): { addresses: string[]; reason: string } {
+  if (answers.length === 0) return { addresses: [], reason: 'did not resolve' };
+  const addresses: string[] = [];
+  let poison: string | undefined;
+  for (const address of answers) {
+    const refusal = permit?.(address) ? null : mediaEgressRefusal(address);
+    if (refusal) poison = `${refusal} address`;
+    else addresses.push(address);
+  }
+  if (poison) return { addresses: [], reason: poison };
+  return { addresses, reason: 'did not resolve' };
+}
 
 /** Why a resolved address may not be used for media, or null when it may. */
 export function mediaEgressRefusal(address: string): RefusalClass | null {

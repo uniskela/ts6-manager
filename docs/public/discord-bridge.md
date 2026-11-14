@@ -1,16 +1,18 @@
 # Discord bridge
 
-The Discord voice bridge is **not** a released TS6 Manager feature. It is not in stable `v1.11.2`, it is not in manager beta images, and it is not a published container.
+The Discord **voice** bridge (join a Discord voice channel and a TeamSpeak channel together) is **not** a released TS6 Manager feature. It is not in stable `v1.11.x`, it is not in manager beta images as a product, and it is not a published bridge container contract.
 
-TS6 Manager remains an opinionated continuation of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager). This page describes status only so testers do not confuse laboratory work with a product.
+Self-hosted **Discord slash commands** for TeamSpeak status and music/radio are a separate capability. See [Discord Commands & Radio](discord-commands.md). That page does **not** enable voice bridging, and Discord users do not appear as TeamSpeak voice clients.
 
-## Released
+TS6 Manager remains an opinionated continuation of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager). This page describes voice-bridge status only so testers do not confuse laboratory work with a product.
 
-Stable TS6 Manager (`v1.11.x`) has no Discord voice integration. There is nothing to install for Discord on a production host.
+## Released manager
+
+Stable TS6 Manager has no Discord **voice** integration to install. Optional Discord **Commands & Radio** (when enabled by an operator) is documented separately and still requires your own Discord application, HTTPS interactions URL, and guild binding.
 
 ## Manager beta
 
-[Beta releases](beta.md) publish the same four manager images (backend, frontend, sidecar, all-in-one) from a later commit. They still do not start a Discord bot and do not accept Discord tokens. Do not add a Discord service to `docker-compose.beta.yml`.
+[Beta releases](beta.md) publish the same four manager images (backend, frontend, sidecar, all-in-one) from a later commit. They do not start a Discord voice bot by default. Do not add a Discord voice-bridge service to `docker-compose.beta.yml` unless a later reviewed contract says otherwise.
 
 ## Bridge-D1 laboratory
 
@@ -30,12 +32,12 @@ Setup, permissions, and troubleshooting for a live lab run belong in that packag
 
 ## Planned D2–D6
 
-Later phases (setup UI, persistence, manager integration, and a supported operator workflow) are planned work. They are not available in beta images and are not scheduled by this page. Until those phases land and pass review, the manager and the laboratory remain separate products.
+Later voice-bridge phases (setup UI, persistence, manager integration, and a supported operator workflow) are planned work. They are not available as a released product on this page. Until those phases land and pass review, the manager product and the laboratory remain separate.
 
 ## Security
 
-- Use a private testing Discord guild and the smallest bot permissions the lab README lists. Do not add the bot to a public guild.
+- Use a private testing Discord guild and the smallest bot permissions the lab README lists. Do not add the lab bot to a public guild.
 - Use a disposable TeamSpeak server. Do not use a production TeamSpeak server.
 - If a token or address appears in a log, rotate the token and treat the log as secret.
 
-If you came here looking for a installable Discord bridge, stop. Use [Installation](installation.md) for TS6 Manager, and [Beta releases](beta.md) only for manager prereleases.
+If you came here looking for Discord **slash commands** / radio control, use [Discord Commands & Radio](discord-commands.md). If you came here looking for an installable voice bridge, stop — use [Installation](installation.md) for TS6 Manager, and [Beta releases](beta.md) only for manager prereleases.
