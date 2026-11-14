@@ -172,9 +172,12 @@ const server = http.createServer(async (req, res) => {
     }, (upRes) => {
       if (upRes.socket) track(job, upRes.socket);
       if (!res.headersSent) {
-        // Forward status + content-type; Location only when sanitized (proxy
-        // does not follow — the client re-requests through this same checks).
-        res.writeHead(upRes.statusCode || 502, buildClientResponseHeaders(upRes));
+        // Forward status + allowlisted headers only. Location is rebuilt in
+        // buildClientResponseHeaders; this proxy never follows redirects —
+        // the client re-requests through the same auth/DNS/port checks.
+        const status = Number(upRes.statusCode) || 502;
+        const headers = buildClientResponseHeaders(upRes);
+        res.writeHead(status, headers);
       }
       upRes.pipe(res);
       upRes.on('end', () => {

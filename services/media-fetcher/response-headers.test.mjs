@@ -32,9 +32,17 @@ describe('sanitizeRedirectLocation', () => {
     assert.equal(sanitizeRedirectLocation('javascript:alert(1)'), null);
     assert.equal(sanitizeRedirectLocation('http://host/x\r\nSet-Cookie: a=b'), null);
     assert.equal(sanitizeRedirectLocation(`http://h/${'a'.repeat(MAX_LOCATION_LENGTH)}`), null);
+    assert.equal(sanitizeRedirectLocation('http://host_name/x'), null);
     assert.equal(sanitizeRedirectLocation(''), null);
     assert.equal(sanitizeRedirectLocation(null), null);
     assert.equal(sanitizeRedirectLocation(['http://ok/', 'http://second/']), 'http://ok/');
+  });
+
+  it('rebuilds absolute Location from validated components (not raw passthrough)', () => {
+    assert.equal(
+      sanitizeRedirectLocation('HTTP://Example.COM:8000/a/../b?x=1'),
+      'http://example.com:8000/b?x=1',
+    );
   });
 });
 
