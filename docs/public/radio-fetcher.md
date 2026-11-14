@@ -115,4 +115,12 @@ No schema change. `RadioStation` rows (`name`, `url`, `genre`, `imageUrl`) stay 
 
 HTTP and HTTPS Icecast (ports 80, 443, 8000, 8008, 8080, 8443) and HLS work through the fetcher. HTTPS jobs pass `-tls_verify 1` so later TLS hops from an HTTPS start (HLS playlists, segments, keys) verify the certificate. Debian ffmpeg 5.1’s `httpproxy` protocol rejects those TLS options, so HTTP Icecast still plays as plain HTTP, and the proxy refuses HTTPS `CONNECT` for HTTP-start jobs instead of following unverified TLS. Private, loopback, and link-local station URLs still fail. Stations on other ports do not play.
 
+### HTTP redirects
+
+The media-fetcher proxy does **not** follow redirects. On 301/302/303/307/308 it forwards a validated `Location` (and `Content-Type`) so ffmpeg can issue the next request through the same proxy. Each hop is authenticated and re-checked (host allowlist when set, radio ports, DNS pin, reserved/private denylist).
+
+Supported: absolute `http://` redirects to another allowed host/port, and relative `Location` values ffmpeg resolves against the current URL.
+
+Not supported under the current CONNECT policy: **HTTP→HTTPS** redirects for HTTP-start jobs (Location may be forwarded, but HTTPS `CONNECT` stays refused so TLS cannot bypass `-tls_verify`). Oversized, credential-bearing, protocol-relative (`//…`), or non-http(s) `Location` values are omitted. Forbidden ports and private/metadata destinations still fail on the follow-up hop.
+
 See [Security — Media downloads](security.md#media-downloads) and [Upgrading](upgrading.md#radio-isolated-fetcher).

@@ -10,6 +10,7 @@ import {
   parseJobId,
   pinMediaAddresses,
 } from './policy.mjs';
+import { buildClientResponseHeaders } from './response-headers.mjs';
 import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const listenPort = Number(process.env.PROXY_PORT || 8080);
@@ -171,9 +172,9 @@ const server = http.createServer(async (req, res) => {
     }, (upRes) => {
       if (upRes.socket) track(job, upRes.socket);
       if (!res.headersSent) {
-        const headers = { connection: 'close' };
-        if (upRes.headers['content-type']) headers['content-type'] = upRes.headers['content-type'];
-        res.writeHead(upRes.statusCode || 502, headers);
+        // Forward status + content-type; Location only when sanitized (proxy
+        // does not follow — the client re-requests through this same checks).
+        res.writeHead(upRes.statusCode || 502, buildClientResponseHeaders(upRes));
       }
       upRes.pipe(res);
       upRes.on('end', () => {
