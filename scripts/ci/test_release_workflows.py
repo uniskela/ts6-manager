@@ -279,10 +279,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             step for step in wf["jobs"]["scan"]["steps"] if step["name"] == "Validate media-fetcher runtime"
         )
         self.assertEqual(validate["if"], "matrix.component == 'media-fetcher'")
-        self.assertIn("ffmpeg", validate["run"])
+        self.assertIn("ffmpeg -hide_banner -version >/dev/null", validate["run"])
+        self.assertNotIn("ffmpeg -version | head", validate["run"])
         self.assertIn("/usr/local/bin/ll-wrap", validate["run"])
         self.assertIn("/app/response-headers.mjs", validate["run"])
         self.assertIn("node --check /app/proxy.mjs", validate["run"])
+        self.assertIn("npm/npx/corepack must not be present", validate["run"])
+        self.assertIn("missing export", validate["run"])
 
         for event in ("pull_request", "push"):
             paths = wf["on"][event]["paths"]

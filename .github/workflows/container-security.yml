@@ -204,9 +204,17 @@ jobs:
           IMAGE="ts6-security-media-fetcher:${{ env.SCAN_SHA }}"
           docker run --rm --entrypoint sh "$IMAGE" -ec "
             set -eu
-            command -v ffmpeg >/dev/null
-            ffmpeg -version | head -n1
+            # Standalone (no pipe): missing shared libs must fail this step.
+            ffmpeg -hide_banner -version >/dev/null
             test -x /usr/local/bin/ll-wrap
+            command -v node >/dev/null
+            # npm/Corepack are not part of the production runtime (F-1).
+            if command -v npm >/dev/null 2>&1 || command -v npx >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1; then
+              echo 'npm/npx/corepack must not be present in the media-fetcher image' >&2
+              exit 1
+            fi
+            test ! -e /usr/local/lib/node_modules/npm
+            test ! -e /usr/local/lib/node_modules/corepack
             for f in \
               /app/fetcher.mjs \
               /app/proxy.mjs \
@@ -223,10 +231,44 @@ jobs:
             do
               test -f \"\$f\"
             done
-            # Resolve relative imports offline (no network, no listen).
+            # Syntax-check entrypoints. Do not import them: proxy.mjs exits without
+            # a ctl token and both would bind sockets on full evaluation (F-3 limit).
             node --check /app/fetcher.mjs
             node --check /app/proxy.mjs
-            node --input-type=module -e 'await import(\"/app/response-headers.mjs\"); await import(\"/app/policy.mjs\"); await import(\"/app/landlock.mjs\"); await import(\"/app/ffmpeg-args.mjs\"); console.log(\"media-fetcher ESM graph ok\");'
+            for f in /app/policy.mjs /app/landlock.mjs /app/response-headers.mjs \
+              /app/ffmpeg-args.mjs /app/token.mjs /app/pending-job.mjs \
+              /app/peer-pid.mjs /app/socket-guards.mjs /app/install-token.mjs
+            do
+              node --check \"\$f\"
+            done
+            # Load dependency modules + assert named exports used by entrypoints.
+            node --input-type=module -e '
+              const pol = await import(\"/app/policy.mjs\");
+              const ll = await import(\"/app/landlock.mjs\");
+              const rh = await import(\"/app/response-headers.mjs\");
+              const ff = await import(\"/app/ffmpeg-args.mjs\");
+              const tok = await import(\"/app/token.mjs\");
+              const pend = await import(\"/app/pending-job.mjs\");
+              const peer = await import(\"/app/peer-pid.mjs\");
+              const sock = await import(\"/app/socket-guards.mjs\");
+              for (const [mod, names] of [
+                [pol, [\"allocateJobId\", \"allowTlsConnect\", \"constrainRadioPorts\", \"parseJobId\", \"parseConnectAuthority\", \"pinMediaAddresses\"]],
+                [ll, [\"landlockDisabledByEnv\", \"parseCheckOutput\"]],
+                [rh, [\"buildClientResponseHeaders\"]],
+                [ff, [\"radioFfmpegArgs\"]],
+                [tok, [\"assertPrivateTokenMode\", \"tokensEqual\"]],
+                [pend, [\"abandonPending\", \"clearUnregisteredJobId\", \"continueIfClientAlive\", \"createPendingJob\", \"noteProxyRegistered\"]],
+                [peer, [\"peerPid\"]],
+                [sock, [\"attachClientSocketLifecycle\"]],
+              ]) {
+                for (const name of names) {
+                  if (typeof mod[name] !== \"function\") {
+                    throw new Error(\"missing export \" + name);
+                  }
+                }
+              }
+              console.log(\"media-fetcher dependency ESM graph ok\");
+            '
             echo 'Validated media-fetcher runtime layout'
           "
 

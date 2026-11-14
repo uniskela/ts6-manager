@@ -13,6 +13,12 @@ RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ffmpeg ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
+  # Production runs node directly — do not ship npm/Corepack (same as Dockerfile.backend).
+  && rm -rf /usr/local/lib/node_modules/npm \
+            /usr/local/lib/node_modules/corepack \
+            /root/.cache/node/corepack \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /usr/local/bin/pnpm /usr/local/bin/pnpx \
   && mkdir -p /jobs /ctl /app \
   && chown node:node /jobs /ctl /app
 COPY --from=wrap /ll-wrap /usr/local/bin/ll-wrap
