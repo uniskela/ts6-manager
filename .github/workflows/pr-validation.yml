@@ -127,8 +127,18 @@ jobs:
           pnpm exec tsx --test "${tests[@]}"
 
       # Radio egress isolation (Landlock, token, policy, ffmpeg args) — not in pnpm workspace.
+      # Debian bookworm image uses distro ffmpeg (5.1.x); ubuntu-latest apt may be 6.x/7.x.
+      # Redirect-through-proxy coverage is required either way (REQUIRE_FFMPEG_REDIRECT).
+      - name: Install ffmpeg for media-fetcher redirect tests
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n1
+
       - name: Run media-fetcher tests
         working-directory: services/media-fetcher
+        env:
+          REQUIRE_FFMPEG_REDIRECT: '1'
         run: node --test *.test.mjs
 
   # The media download cache relies on filesystem behaviour that differs by platform

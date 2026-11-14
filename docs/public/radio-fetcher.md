@@ -123,4 +123,6 @@ Supported: absolute `http://` redirects to another allowed host/port, and relati
 
 Not supported under the current CONNECT policy: **HTTP→HTTPS** redirects for HTTP-start jobs (Location may be forwarded, but HTTPS `CONNECT` stays refused so TLS cannot bypass `-tls_verify`). Oversized, credential-bearing, protocol-relative (`//…`), or non-http(s) `Location` values are omitted. Forbidden ports and private/metadata destinations still fail on the follow-up hop.
 
+**Known compatibility gap (L-3, not yet changed):** the Location rebuild path validates DNS hostnames with an ASCII label regex after `URL` parsing. Some valid public **IPv6-literal** `Location` forms may still be omitted incorrectly (or accepted as text but then refused on the next hop by reserved/documentation ranges such as `2001:db8::/32`). A smallest safe fix is likely “accept any `isIP(hostname) === 6` hostname already returned by `URL` and rebuild with brackets,” but that needs a separate independent security review before shipping.
+
 See [Security — Media downloads](security.md#media-downloads) and [Upgrading](upgrading.md#radio-isolated-fetcher).
