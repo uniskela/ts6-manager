@@ -1,9 +1,13 @@
 /**
- * Integration: media-fetcher proxy forwards sanitized Location without
- * following redirects; subsequent hops re-run auth/DNS/port checks.
+ * Real-proxy redirect wiring + production-policy negatives.
  *
- * Origin binds a host IPv4 that passes mediaEgressRefusal (not loopback /
- * TEST-NET / private). Without that, every hop is 403 before Location matters.
+ * Wiring suite binds a non-loopback IPv4 that passes mediaEgressRefusal under
+ * PROXY_PERMIT_PRIVATE=1 (private LAN on CI runners, or a public NIC locally).
+ * Loopback stays in neverAllowed even with permitPrivate — do not use 127.0.0.1
+ * as the origin bind address.
+ *
+ * Required suites fail the job if no suitable bind address exists (no silent skip).
+ * Optional ffmpeg follow uses explicit t.skip() only when ffmpeg is missing.
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -20,25 +24,42 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const CTL_TOKEN = 'ts6-proxy-redirect-test-token';
 const JOB_TOKEN = 'ts6-job-redirect-test-token';
 
-function pickPublicBindIp() {
+/** Non-loopback IPv4 that pinMediaAddresses accepts under the given policy opts. */
+function pickBindIp(opts = {}) {
+  const allowed = [];
   for (const list of Object.values(os.networkInterfaces())) {
     for (const a of list || []) {
       const v4 = a.family === 'IPv4' || a.family === 4;
       if (!v4 || a.internal) continue;
-      if (mediaEgressRefusal(a.address) === null) return a.address;
+      if (mediaEgressRefusal(a.address, opts) === null) allowed.push(a.address);
     }
   }
-  return null;
+  if (!allowed.length) return null;
+  // Prefer private LAN when permitPrivate (matches GitHub Actions runners).
+  if (opts.permitPrivate) {
+    const priv = allowed.find((ip) => mediaEgressRefusal(ip) === 'private');
+    if (priv) return priv;
+  }
+  return allowed[0];
 }
 
-const ORIGIN_IP = pickPublicBindIp();
+function requireBindIp(opts, label) {
+  const ip = pickBindIp(opts);
+  if (!ip) {
+    throw new Error(
+      `${label}: no non-loopback IPv4 passes mediaEgressRefusal(${JSON.stringify(opts)}). `
+      + 'Required real-proxy redirect tests cannot run; failing the job (M-1).',
+    );
+  }
+  return ip;
+}
 
-function listenOnRadioPort(host) {
-  const candidates = [...RADIO_EGRESS_PORTS].filter((p) => p !== 443 && p !== 80);
+function listenOnRadioPort(host, exclude = new Set()) {
+  const candidates = [...RADIO_EGRESS_PORTS].filter((p) => p !== 443 && p !== 80 && !exclude.has(p));
   return new Promise((resolve, reject) => {
     const tryNext = (i) => {
       if (i >= candidates.length) {
-        reject(new Error('no free radio port for origin fixture'));
+        reject(new Error(`no free radio port on ${host}`));
         return;
       }
       const port = candidates[i];
@@ -168,280 +189,6 @@ function ctl(sockPath, method, urlPath, body) {
   });
 }
 
-function originBase(port) {
-  return `http://${ORIGIN_IP}:${port}`;
-}
-
-describe('proxy redirect Location forwarding', { skip: !ORIGIN_IP }, () => {
-  let dir;
-  let origin;
-  let originPort;
-  let altOrigin;
-  let altPort;
-  let proxyPort;
-  let proxy;
-  let hits;
-  let ctlPath;
-
-  before(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-proxy-redir-'));
-    ctlPath = path.join(dir, 'proxy.sock');
-    fs.writeFileSync(path.join(dir, '.ctl-token'), CTL_TOKEN, { mode: 0o600 });
-    hits = [];
-
-    const bound = await listenOnRadioPort(ORIGIN_IP);
-    origin = bound.server;
-    originPort = bound.port;
-    origin.on('request', (req, res) => {
-      hits.push(`${req.method} ${req.url}`);
-      if (req.url === '/direct') {
-        res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Set-Cookie': 'secret=1' });
-        res.end('PCM');
-        return;
-      }
-      if (req.url === '/same-abs') {
-        res.writeHead(302, { Location: `${originBase(originPort)}/direct` });
-        res.end();
-        return;
-      }
-      if (req.url === '/same-rel') {
-        res.writeHead(302, { Location: '/direct' });
-        res.end();
-        return;
-      }
-      if (req.url === '/cross-port') {
-        res.writeHead(302, { Location: `${originBase(altPort)}/direct` });
-        res.end();
-        return;
-      }
-      if (req.url === '/bad-port') {
-        res.writeHead(302, { Location: `http://${ORIGIN_IP}:22/ssh` });
-        res.end();
-        return;
-      }
-      if (req.url === '/https-hop') {
-        res.writeHead(302, { Location: 'https://example.com/live' });
-        res.end();
-        return;
-      }
-      if (req.url === '/loop-a') {
-        res.writeHead(302, { Location: `${originBase(originPort)}/loop-b` });
-        res.end();
-        return;
-      }
-      if (req.url === '/loop-b') {
-        res.writeHead(302, { Location: `${originBase(originPort)}/loop-a` });
-        res.end();
-        return;
-      }
-      if (req.url === '/oversize') {
-        res.writeHead(302, { Location: `${originBase(originPort)}/${'x'.repeat(3000)}` });
-        res.end();
-        return;
-      }
-      if (req.url === '/malformed') {
-        res.writeHead(302, { Location: 'file:///etc/passwd' });
-        res.end();
-        return;
-      }
-      if (req.url === '/loopback-hop') {
-        res.writeHead(302, { Location: 'http://127.0.0.1/metadata' });
-        res.end();
-        return;
-      }
-      res.writeHead(404).end();
-    });
-
-    // Second radio port on same public IP (allowed non-default port hop).
-    const altCandidates = [...RADIO_EGRESS_PORTS].filter(
-      (p) => p !== 443 && p !== 80 && p !== originPort,
-    );
-    altPort = null;
-    for (const port of altCandidates) {
-      try {
-        altOrigin = await new Promise((resolve, reject) => {
-          const server = http.createServer((req, res) => {
-            hits.push(`alt ${req.method} ${req.url}`);
-            if (req.url === '/direct') {
-              res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
-              res.end('ALT');
-              return;
-            }
-            res.writeHead(404).end();
-          });
-          server.once('error', reject);
-          server.listen(port, ORIGIN_IP, () => resolve(server));
-        });
-        altPort = port;
-        break;
-      } catch {
-        altOrigin = null;
-      }
-    }
-
-    proxyPort = await freePort();
-    proxy = spawn(process.execPath, [path.join(here, 'proxy.mjs')], {
-      env: {
-        ...process.env,
-        PROXY_PORT: String(proxyPort),
-        PROXY_CTL: ctlPath,
-        PROXY_CTL_TOKEN_FILE: path.join(dir, '.ctl-token'),
-        PROXY_MAX_JOBS: '4',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    await waitReady(proxy, 'PROXY ready');
-
-    const reg = await ctl(ctlPath, 'POST', '/jobs', {
-      id: 'redir1',
-      token: JOB_TOKEN,
-      ports: [...RADIO_EGRESS_PORTS],
-      connect: false,
-      hosts: [],
-    });
-    assert.equal(reg.status, 201, reg.body);
-  });
-
-  after(async () => {
-    if (proxy && !proxy.killed) {
-      proxy.kill('SIGTERM');
-      await new Promise((r) => proxy.once('exit', r));
-    }
-    if (origin) await new Promise((r) => origin.close(r));
-    if (altOrigin) await new Promise((r) => altOrigin.close(r));
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('forwards a direct non-redirect stream without leaking other headers', async () => {
-    hits.length = 0;
-    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/direct`);
-    assert.equal(res.status, 200);
-    assert.equal(res.body, 'PCM');
-    assert.equal(res.headers['content-type'], 'audio/mpeg');
-    assert.equal(res.headers['set-cookie'], undefined);
-    assert.equal(res.headers.location, undefined);
-    assert.deepEqual(hits, ['GET /direct']);
-  });
-
-  it('returns same-host absolute redirect without following', async () => {
-    hits.length = 0;
-    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
-    assert.equal(res.status, 302);
-    assert.equal(res.headers.location, `${originBase(originPort)}/direct`);
-    assert.deepEqual(hits, ['GET /same-abs'], 'proxy must not fetch the Location target');
-  });
-
-  it('returns same-host relative redirect without following', async () => {
-    hits.length = 0;
-    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-rel`);
-    assert.equal(res.status, 302);
-    assert.equal(res.headers.location, '/direct');
-    assert.deepEqual(hits, ['GET /same-rel']);
-  });
-
-  it('lets the client complete a redirect hop through the same checked proxy', async () => {
-    hits.length = 0;
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
-    assert.equal(first.status, 302);
-    const second = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.equal(second.status, 200);
-    assert.equal(second.body, 'PCM');
-    assert.deepEqual(hits, ['GET /same-abs', 'GET /direct']);
-  });
-
-  it('allows a redirect to another permitted radio port on the same host', async () => {
-    if (!altPort) return;
-    hits.length = 0;
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/cross-port`);
-    assert.equal(first.status, 302);
-    assert.equal(first.headers.location, `${originBase(altPort)}/direct`);
-    const second = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.equal(second.status, 200);
-    assert.equal(second.body, 'ALT');
-  });
-
-  it('refuses a subsequent hop to a forbidden port', async () => {
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/bad-port`);
-    assert.equal(first.status, 302);
-    assert.equal(first.headers.location, `http://${ORIGIN_IP}:22/ssh`);
-    const second = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.equal(second.status, 403);
-    assert.match(second.body, /refused/);
-  });
-
-  it('refuses a subsequent hop to loopback even when Location was forwarded', async () => {
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/loopback-hop`);
-    assert.equal(first.status, 302);
-    assert.equal(first.headers.location, 'http://127.0.0.1/metadata');
-    const second = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.equal(second.status, 403);
-  });
-
-  it('forwards HTTPS Location but refuses CONNECT for HTTP-start jobs', async () => {
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/https-hop`);
-    assert.equal(first.status, 302);
-    assert.equal(first.headers.location, 'https://example.com/live');
-    const hop = await connectThroughProxy(proxyPort, 'example.com:443');
-    assert.equal(hop.status, 403, 'HTTP-start jobs keep connect:false');
-  });
-
-  it('omits oversized or malformed Location values', async () => {
-    const oversize = await requestThroughProxy(proxyPort, `${originBase(originPort)}/oversize`);
-    assert.equal(oversize.status, 302);
-    assert.equal(oversize.headers.location, undefined);
-    const malformed = await requestThroughProxy(proxyPort, `${originBase(originPort)}/malformed`);
-    assert.equal(malformed.status, 302);
-    assert.equal(malformed.headers.location, undefined);
-  });
-
-  it('does not auto-walk redirect loops', async () => {
-    hits.length = 0;
-    const a = await requestThroughProxy(proxyPort, `${originBase(originPort)}/loop-a`);
-    assert.equal(a.status, 302);
-    assert.equal(a.headers.location, `${originBase(originPort)}/loop-b`);
-    assert.deepEqual(hits, ['GET /loop-a']);
-    const b = await requestThroughProxy(proxyPort, a.headers.location);
-    assert.equal(b.status, 302);
-    assert.deepEqual(hits, ['GET /loop-a', 'GET /loop-b']);
-  });
-
-  it('rejects subsequent hops after job revoke (aborted grant)', async () => {
-    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
-    assert.equal(first.status, 302);
-    const revoked = await ctl(ctlPath, 'POST', '/jobs/redir1/revoke');
-    assert.equal(revoked.status, 200);
-    // revoke aborts the job but leaves the token mapped; follow-up must fail
-    // (502/403), not stream the target. DELETE is what drops auth → 407.
-    const second = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.notEqual(second.status, 200);
-    assert.ok([403, 502].includes(second.status), `unexpected ${second.status}`);
-    const deleted = await ctl(ctlPath, 'DELETE', '/jobs/redir1');
-    assert.equal(deleted.status, 200);
-    const afterDelete = await requestThroughProxy(proxyPort, first.headers.location);
-    assert.equal(afterDelete.status, 407);
-  });
-
-  it('rejects wrong job credentials on a redirect follow-up', async () => {
-    const reg = await ctl(ctlPath, 'POST', '/jobs', {
-      id: 'redir2',
-      token: `${JOB_TOKEN}-2`,
-      ports: [...RADIO_EGRESS_PORTS],
-      connect: false,
-      hosts: [],
-    });
-    assert.equal(reg.status, 201, reg.body);
-    const first = await requestThroughProxy(
-      proxyPort,
-      `${originBase(originPort)}/same-abs`,
-      { token: `${JOB_TOKEN}-2` },
-    );
-    assert.equal(first.status, 302);
-    const bad = await requestThroughProxy(proxyPort, first.headers.location, { token: 'not-a-real-job-token!' });
-    assert.equal(bad.status, 407);
-  });
-});
-
-/** Test-only: inject Proxy-Authorization like the production job shim (no pid gate). */
 function startAuthShim(proxyPort, jobToken) {
   const auth = `Basic ${Buffer.from(`job:${jobToken}`).toString('base64')}`;
   const server = net.createServer((client) => {
@@ -476,22 +223,392 @@ function startAuthShim(proxyPort, jobToken) {
   });
 }
 
-describe('ffmpeg follows absolute http redirect via proxy (optional)', { skip: !ORIGIN_IP }, () => {
-  it('opens both hops when Location is forwarded (skips if ffmpeg missing)', async () => {
+describe('proxy redirect Location forwarding (wiring)', () => {
+  let dir;
+  let originIp;
+  let origin;
+  let originPort;
+  let altOrigin;
+  let altPort;
+  let proxyPort;
+  let proxy;
+  let hits;
+  let ctlPath;
+
+  function originBase(port) {
+    return `http://${originIp}:${port}`;
+  }
+
+  before(async () => {
+    // Disposable test env only — production default leaves PROXY_PERMIT_PRIVATE unset.
+    originIp = requireBindIp({ permitPrivate: true }, 'proxy-redirect wiring');
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-proxy-redir-'));
+    ctlPath = path.join(dir, 'proxy.sock');
+    fs.writeFileSync(path.join(dir, '.ctl-token'), CTL_TOKEN, { mode: 0o600 });
+    hits = [];
+
+    const bound = await listenOnRadioPort(originIp);
+    origin = bound.server;
+    originPort = bound.port;
+    origin.on('request', (req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      if (req.url === '/direct') {
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Set-Cookie': 'secret=1', Server: 'icecast' });
+        res.end('PCM');
+        return;
+      }
+      if (req.url === '/same-abs') {
+        res.writeHead(302, { Location: `${originBase(originPort)}/direct` });
+        res.end();
+        return;
+      }
+      if (req.url === '/same-rel') {
+        res.writeHead(302, { Location: '/direct' });
+        res.end();
+        return;
+      }
+      if (req.url === '/cross-port') {
+        res.writeHead(302, { Location: `${originBase(altPort)}/direct` });
+        res.end();
+        return;
+      }
+      if (req.url === '/bad-port') {
+        res.writeHead(302, { Location: `http://${originIp}:22/ssh` });
+        res.end();
+        return;
+      }
+      if (req.url === '/https-hop') {
+        res.writeHead(302, { Location: 'https://example.com/live' });
+        res.end();
+        return;
+      }
+      if (req.url === '/loop-a') {
+        res.writeHead(302, { Location: `${originBase(originPort)}/loop-b` });
+        res.end();
+        return;
+      }
+      if (req.url === '/loop-b') {
+        res.writeHead(302, { Location: `${originBase(originPort)}/loop-a` });
+        res.end();
+        return;
+      }
+      if (req.url === '/oversize') {
+        res.writeHead(302, { Location: `${originBase(originPort)}/${'x'.repeat(3000)}` });
+        res.end();
+        return;
+      }
+      if (req.url === '/malformed') {
+        res.writeHead(302, { Location: 'file:///etc/passwd' });
+        res.end();
+        return;
+      }
+      if (req.url === '/loopback-hop') {
+        res.writeHead(302, { Location: 'http://127.0.0.1/metadata' });
+        res.end();
+        return;
+      }
+      if (req.url === '/metadata-hop') {
+        res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
+        res.end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const altBound = await listenOnRadioPort(originIp, new Set([originPort]));
+    altOrigin = altBound.server;
+    altPort = altBound.port;
+    altOrigin.on('request', (req, res) => {
+      hits.push(`alt ${req.method} ${req.url}`);
+      if (req.url === '/direct') {
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+        res.end('ALT');
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    proxyPort = await freePort();
+    proxy = spawn(process.execPath, [path.join(here, 'proxy.mjs')], {
+      env: {
+        ...process.env,
+        PROXY_PORT: String(proxyPort),
+        PROXY_CTL: ctlPath,
+        PROXY_CTL_TOKEN_FILE: path.join(dir, '.ctl-token'),
+        PROXY_PERMIT_PRIVATE: '1',
+        PROXY_MAX_JOBS: '4',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    await waitReady(proxy, 'PROXY ready');
+
+    const reg = await ctl(ctlPath, 'POST', '/jobs', {
+      id: 'redir1',
+      token: JOB_TOKEN,
+      ports: [...RADIO_EGRESS_PORTS],
+      connect: false,
+      hosts: [],
+    });
+    assert.equal(reg.status, 201, reg.body);
+  });
+
+  after(async () => {
+    if (proxy && !proxy.killed) {
+      proxy.kill('SIGTERM');
+      await new Promise((r) => proxy.once('exit', r));
+    }
+    if (origin) await new Promise((r) => origin.close(r));
+    if (altOrigin) await new Promise((r) => altOrigin.close(r));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts the real proxy and forwards a direct stream without leaking headers', async () => {
+    hits.length = 0;
+    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/direct`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body, 'PCM');
+    assert.equal(res.headers['content-type'], 'audio/mpeg');
+    assert.equal(res.headers['set-cookie'], undefined);
+    assert.equal(res.headers.server, undefined);
+    assert.equal(res.headers.location, undefined);
+    assert.deepEqual(hits, ['GET /direct']);
+  });
+
+  it('returns same-host absolute redirect Location without following', async () => {
+    hits.length = 0;
+    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.location, `${originBase(originPort)}/direct`);
+    assert.deepEqual(hits, ['GET /same-abs'], 'proxy must not fetch the Location target');
+  });
+
+  it('returns same-host relative redirect without following', async () => {
+    hits.length = 0;
+    const res = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-rel`);
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.location, '/direct');
+    assert.deepEqual(hits, ['GET /same-rel']);
+  });
+
+  it('re-authenticates the next hop through the same checked proxy', async () => {
+    hits.length = 0;
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
+    assert.equal(first.status, 302);
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(second.status, 200);
+    assert.equal(second.body, 'PCM');
+    assert.deepEqual(hits, ['GET /same-abs', 'GET /direct']);
+  });
+
+  it('allows a redirect to another permitted radio port on the same host', async () => {
+    hits.length = 0;
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/cross-port`);
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.location, `${originBase(altPort)}/direct`);
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(second.status, 200);
+    assert.equal(second.body, 'ALT');
+  });
+
+  it('refuses a subsequent hop to a forbidden port', async () => {
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/bad-port`);
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.location, `http://${originIp}:22/ssh`);
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(second.status, 403);
+    assert.match(second.body, /refused/);
+  });
+
+  it('forwards HTTPS Location but refuses CONNECT for HTTP-start jobs', async () => {
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/https-hop`);
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.location, 'https://example.com/live');
+    const hop = await connectThroughProxy(proxyPort, 'example.com:443');
+    assert.equal(hop.status, 403, 'HTTP-start jobs keep connect:false');
+  });
+
+  it('refuses a follow-up hop to loopback even when Location was forwarded', async () => {
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/loopback-hop`);
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.location, 'http://127.0.0.1/metadata');
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(second.status, 403);
+  });
+
+  it('refuses a follow-up hop to link-local metadata even when Location was forwarded', async () => {
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/metadata-hop`);
+    assert.equal(first.status, 302);
+    assert.equal(first.headers.location, 'http://169.254.169.254/latest/meta-data/');
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(second.status, 403);
+  });
+
+  it('omits oversized and malformed Location values', async () => {
+    const oversize = await requestThroughProxy(proxyPort, `${originBase(originPort)}/oversize`);
+    assert.equal(oversize.status, 302);
+    assert.equal(oversize.headers.location, undefined);
+    const malformed = await requestThroughProxy(proxyPort, `${originBase(originPort)}/malformed`);
+    assert.equal(malformed.status, 302);
+    assert.equal(malformed.headers.location, undefined);
+    // CRLF / header-injection Locations are covered in response-headers.test.mjs
+    // (Node's writeHead refuses to emit them from a fixture origin).
+  });
+
+  it('does not auto-walk redirect loops', async () => {
+    hits.length = 0;
+    const a = await requestThroughProxy(proxyPort, `${originBase(originPort)}/loop-a`);
+    assert.equal(a.status, 302);
+    assert.equal(a.headers.location, `${originBase(originPort)}/loop-b`);
+    assert.deepEqual(hits, ['GET /loop-a']);
+    const b = await requestThroughProxy(proxyPort, a.headers.location);
+    assert.equal(b.status, 302);
+    assert.deepEqual(hits, ['GET /loop-a', 'GET /loop-b']);
+  });
+
+  it('rejects subsequent hops after job revoke and after delete', async () => {
+    const first = await requestThroughProxy(proxyPort, `${originBase(originPort)}/same-abs`);
+    assert.equal(first.status, 302);
+    const revoked = await ctl(ctlPath, 'POST', '/jobs/redir1/revoke');
+    assert.equal(revoked.status, 200);
+    const second = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.notEqual(second.status, 200);
+    assert.ok([403, 502].includes(second.status), `unexpected ${second.status}`);
+    const deleted = await ctl(ctlPath, 'DELETE', '/jobs/redir1');
+    assert.equal(deleted.status, 200);
+    const afterDelete = await requestThroughProxy(proxyPort, first.headers.location);
+    assert.equal(afterDelete.status, 407);
+  });
+
+  it('rejects wrong job credentials on a redirect follow-up', async () => {
+    const reg = await ctl(ctlPath, 'POST', '/jobs', {
+      id: 'redir2',
+      token: `${JOB_TOKEN}-2`,
+      ports: [...RADIO_EGRESS_PORTS],
+      connect: false,
+      hosts: [],
+    });
+    assert.equal(reg.status, 201, reg.body);
+    const first = await requestThroughProxy(
+      proxyPort,
+      `${originBase(originPort)}/same-abs`,
+      { token: `${JOB_TOKEN}-2` },
+    );
+    assert.equal(first.status, 302);
+    const bad = await requestThroughProxy(proxyPort, first.headers.location, { token: 'not-a-real-job-token!' });
+    assert.equal(bad.status, 407);
+  });
+});
+
+describe('proxy default policy rejects private/loopback destinations', () => {
+  /** Live proxy with production default (PROXY_PERMIT_PRIVATE unset). No origin bind required. */
+  let dir;
+  let proxyPort;
+  let proxy;
+  let ctlPath;
+  let privateLanIp;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-proxy-pol-'));
+    ctlPath = path.join(dir, 'proxy.sock');
+    fs.writeFileSync(path.join(dir, '.ctl-token'), CTL_TOKEN, { mode: 0o600 });
+    // Prefer an address that is private under production policy but allowed with permitPrivate.
+    privateLanIp = null;
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const a of list || []) {
+        const v4 = a.family === 'IPv4' || a.family === 4;
+        if (!v4 || a.internal) continue;
+        if (
+          mediaEgressRefusal(a.address, { permitPrivate: true }) === null
+          && mediaEgressRefusal(a.address, {}) === 'private'
+        ) {
+          privateLanIp = a.address;
+          break;
+        }
+      }
+      if (privateLanIp) break;
+    }
+    proxyPort = await freePort();
+    proxy = spawn(process.execPath, [path.join(here, 'proxy.mjs')], {
+      env: {
+        ...process.env,
+        PROXY_PORT: String(proxyPort),
+        PROXY_CTL: ctlPath,
+        PROXY_CTL_TOKEN_FILE: path.join(dir, '.ctl-token'),
+        // deliberately omit PROXY_PERMIT_PRIVATE — production default
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    await waitReady(proxy, 'PROXY ready');
+    const reg = await ctl(ctlPath, 'POST', '/jobs', {
+      id: 'pol1',
+      token: JOB_TOKEN,
+      ports: [...RADIO_EGRESS_PORTS],
+      connect: false,
+    });
+    assert.equal(reg.status, 201, reg.body);
+  });
+
+  after(async () => {
+    if (proxy && !proxy.killed) {
+      proxy.kill('SIGTERM');
+      await new Promise((r) => proxy.once('exit', r));
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuses a direct request to loopback under default policy', async () => {
+    const res = await requestThroughProxy(proxyPort, 'http://127.0.0.1/stream');
+    assert.equal(res.status, 403);
+  });
+
+  it('refuses a direct request to link-local metadata under default policy', async () => {
+    const res = await requestThroughProxy(proxyPort, 'http://169.254.169.254/latest/meta-data/');
+    assert.equal(res.status, 403);
+  });
+
+  it('refuses a private LAN address when PROXY_PERMIT_PRIVATE is unset', async (t) => {
+    if (!privateLanIp || mediaEgressRefusal(privateLanIp) === null) {
+      t.skip('no private LAN IPv4 on this host (policy.test.mjs still covers private refusal)');
+      return;
+    }
+    const res = await requestThroughProxy(proxyPort, `http://${privateLanIp}:8000/stream`);
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('proxy wiring still denies neverAllowed destinations with PROXY_PERMIT_PRIVATE=1', () => {
+  it('documents loopback/metadata stay refused (covered in wiring suite hops)', () => {
+    assert.equal(mediaEgressRefusal('127.0.0.1', { permitPrivate: true }), 'reserved');
+    assert.equal(mediaEgressRefusal('169.254.169.254', { permitPrivate: true }), 'reserved');
+    assert.equal(mediaEgressRefusal('10.0.0.1', { permitPrivate: true }), null);
+    assert.equal(mediaEgressRefusal('10.0.0.1', {}), 'private');
+  });
+});
+
+describe('ffmpeg follows absolute http redirect via proxy (optional)', () => {
+  it('opens both hops when Location is forwarded', async (t) => {
+    const originIp = pickBindIp({ permitPrivate: true });
+    if (!originIp) {
+      t.skip('no bind IP for optional ffmpeg redirect check');
+      return;
+    }
     const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
     const version = spawn(ffmpeg, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
     const ok = await new Promise((resolve) => {
       version.on('error', () => resolve(false));
       version.on('exit', (code) => resolve(code === 0));
     });
-    if (!ok) return;
+    if (!ok) {
+      t.skip('ffmpeg binary not available');
+      return;
+    }
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-ff-redir-'));
     const ctlPath = path.join(dir, 'proxy.sock');
     const tokenFile = path.join(dir, '.ctl-token');
     fs.writeFileSync(tokenFile, CTL_TOKEN, { mode: 0o600 });
     const hits = [];
-    const bound = await listenOnRadioPort(ORIGIN_IP);
+    const bound = await listenOnRadioPort(originIp);
     const originPort = bound.port;
     const origin = bound.server;
     origin.on('request', (req, res) => {
@@ -502,7 +619,7 @@ describe('ffmpeg follows absolute http redirect via proxy (optional)', { skip: !
         return;
       }
       if (req.url === '/go') {
-        res.writeHead(302, { Location: `${originBase(originPort)}/tone` });
+        res.writeHead(302, { Location: `http://${originIp}:${originPort}/tone` });
         res.end();
         return;
       }
@@ -515,6 +632,7 @@ describe('ffmpeg follows absolute http redirect via proxy (optional)', { skip: !
         PROXY_PORT: String(proxyPort),
         PROXY_CTL: ctlPath,
         PROXY_CTL_TOKEN_FILE: tokenFile,
+        PROXY_PERMIT_PRIVATE: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -533,7 +651,7 @@ describe('ffmpeg follows absolute http redirect via proxy (optional)', { skip: !
       const ff = spawn(ffmpeg, [
         '-hide_banner', '-nostdin', '-v', 'error',
         '-protocol_whitelist', 'http,https,tls,tcp,httpproxy,crypto',
-        '-i', `${originBase(originPort)}/go`,
+        '-i', `http://${originIp}:${originPort}/go`,
         '-f', 'null', '-',
       ], {
         env: { ...process.env, http_proxy: proxyUrl, HTTP_PROXY: proxyUrl },
