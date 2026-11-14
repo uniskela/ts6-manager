@@ -1,9 +1,73 @@
 import type { VoiceBot } from '../voice-bot.js';
+import { MediaEgressError } from '../egress/media-egress.js';
+import {
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+} from '../egress/media-fetcher-client.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { beginChatMediaRequest, getChatMediaGeneration, getChatMediaIntent, invalidateChatPlaylistExpansion } from './queue.js';
 import { loadRadioStations, radioQueueItem } from './library.js';
+import type { QueueItem } from '../playlist/queue.js';
+
+/** Generic TeamSpeak copy when the failure is not an allowlisted MediaEgressError. */
+export const RADIO_PLAY_FAILED_GENERIC = 'Failed to play: Radio playback failed.';
+
+/** Stable radio MediaEgressError texts safe to show after "Failed to play: ". */
+const SAFE_RADIO_PLAY_MESSAGES = new Set([
+  RADIO_FETCHER_BUSY,
+  RADIO_FETCHER_UNAVAILABLE,
+]);
+
+/** Map playStream failures to allowlisted TeamSpeak text (no raw err.message leak). */
+export function formatRadioPlayFailure(err: unknown): string {
+  if (err instanceof MediaEgressError && SAFE_RADIO_PLAY_MESSAGES.has(err.message)) {
+    return `Failed to play: ${err.message}`;
+  }
+  return RADIO_PLAY_FAILED_GENERIC;
+}
+
+/** Await a TeamSpeak reply; swallow delivery failures without a second reply. */
+async function replyRadio(
+  context: CommandContext,
+  bot: VoiceBot,
+  userClid: number,
+  msg: string,
+): Promise<void> {
+  try {
+    await context.reply(bot, userClid, msg);
+  } catch {
+    // Delivery failed once — do not retry or rethrow (avoids duplicate/unhandled rejection).
+  }
+}
+
+/**
+ * Start an already-accepted radio queue item and send exactly one outcome reply
+ * when the request is still current.
+ */
+async function playAcceptedRadio(
+  context: CommandContext,
+  bot: VoiceBot,
+  userClid: number,
+  queueItem: QueueItem,
+  stationName: string,
+  isCurrent: () => boolean,
+): Promise<void> {
+  try {
+    await bot.playStream(queueItem, context.chatMusicSwitch(bot));
+  } catch (err: unknown) {
+    if (!isCurrent()) return;
+    await replyRadio(context, bot, userClid, formatRadioPlayFailure(err));
+    return;
+  }
+  if (!isCurrent() || bot.nowPlaying !== queueItem) {
+    if (bot.nowPlaying === queueItem) bot.stopAudio({ keepPendingRequests: true });
+    return;
+  }
+  context.saveMusicRequest(bot, queueItem);
+  await replyRadio(context, bot, userClid, `Now playing: ${stationName}`);
+}
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -25,7 +89,7 @@ export async function handleRadio(
   const dbBot = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true } });
   if (!isSameBot()) return;
   if (!dbBot) {
-    context.reply(bot, userClid, 'Bot config not found.');
+    await replyRadio(context, bot, userClid, 'Bot config not found.');
     return;
   }
 
@@ -33,13 +97,14 @@ export async function handleRadio(
   if (!isSameBot()) return;
 
   if (stations.length === 0) {
-    context.reply(bot, userClid, 'No radio stations configured.');
+    await replyRadio(context, bot, userClid, 'No radio stations configured.');
     return;
   }
 
   // No argument — list stations
   if (!args) {
-    context.reply(
+    await replyRadio(
+      context,
       bot,
       userClid,
       formatRadioListMessage(
@@ -52,13 +117,13 @@ export async function handleRadio(
   // Argument — play station by ID
   const stationId = Number(args);
   if (!/^[1-9]\d*$/.test(args) || !Number.isSafeInteger(stationId)) {
-    context.reply(bot, userClid, 'Usage: !radio <id> — Use !radio to list stations.');
+    await replyRadio(context, bot, userClid, 'Usage: !radio <id> — Use !radio to list stations.');
     return;
   }
 
   const station = stations.find((s) => s.id === stationId);
   if (!station) {
-    context.reply(bot, userClid, `Station #${stationId} not found. Use !radio to list stations.`);
+    await replyRadio(context, bot, userClid, `Station #${stationId} not found. Use !radio to list stations.`);
     return;
   }
 
@@ -76,20 +141,7 @@ export async function handleRadio(
 
   request.accept();
   if (!isCurrent()) return;
-  try {
-    await bot.playStream(queueItem, context.chatMusicSwitch(bot));
-  } catch (err: any) {
-    if (!isCurrent()) return;
-    // MediaEgressError texts (busy / unavailable) are crafted for chat.
-    context.reply(bot, userClid, `Failed to play: ${err.message}`);
-    return;
-  }
-  if (!isCurrent() || bot.nowPlaying !== queueItem) {
-    if (bot.nowPlaying === queueItem) bot.stopAudio({ keepPendingRequests: true });
-    return;
-  }
-  context.saveMusicRequest(bot, queueItem);
-  context.reply(bot, userClid, `Now playing: ${station.name}`);
+  await playAcceptedRadio(context, bot, userClid, queueItem, station.name, isCurrent);
 }
 
 /** Longest free-text query `!play` / `/play` sends to search. */
