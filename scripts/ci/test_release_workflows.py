@@ -256,6 +256,43 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for event in ("pull_request", "push"):
             self.assertIn(".trivyignore", wf["on"][event]["paths"])
 
+    def test_container_security_scans_media_fetcher_image(self):
+        wf = workflow("container-security.yml")
+        matrix = wf["jobs"]["scan"]["strategy"]["matrix"]["include"]
+        by_component = {row["component"]: row for row in matrix}
+        self.assertEqual(
+            set(by_component),
+            {"backend", "frontend", "sidecar", "media-fetcher", "all-in-one"},
+        )
+        self.assertEqual(by_component["media-fetcher"]["dockerfile"], "services/media-fetcher/Dockerfile")
+        self.assertEqual(by_component["media-fetcher"]["context"], "services/media-fetcher")
+        for component in ("backend", "frontend", "sidecar", "all-in-one"):
+            self.assertEqual(by_component[component]["context"], ".")
+
+        build = next(step for step in wf["jobs"]["scan"]["steps"] if step["name"] == "Build final image")
+        self.assertEqual(build["with"]["context"], "${{ matrix.context }}")
+        # PyYAML may keep GitHub Actions YAML booleans as strings.
+        self.assertIn(build["with"]["push"], (False, "false"))
+        self.assertIn(build["with"]["load"], (True, "true"))
+
+        validate = next(
+            step for step in wf["jobs"]["scan"]["steps"] if step["name"] == "Validate media-fetcher runtime"
+        )
+        self.assertEqual(validate["if"], "matrix.component == 'media-fetcher'")
+        self.assertIn("ffmpeg", validate["run"])
+        self.assertIn("/usr/local/bin/ll-wrap", validate["run"])
+        self.assertIn("/app/response-headers.mjs", validate["run"])
+        self.assertIn("node --check /app/proxy.mjs", validate["run"])
+
+        for event in ("pull_request", "push"):
+            paths = wf["on"][event]["paths"]
+            self.assertIn("services/media-fetcher/**", paths)
+            self.assertIn("Dockerfile.backend", paths)
+            self.assertIn(".github/workflows/container-security.yml", paths)
+        self.assertIn("schedule", wf["on"])
+        self.assertIn("workflow_dispatch", wf["on"])
+        self.assertIn("workflow_call", wf["on"])
+
     def test_missing_description_credentials_skip_with_a_warning(self):
         detect = next(step for step in self.description["jobs"]["update"]["steps"] if step.get("id") == "hub")
         self.assertEqual(

@@ -11,6 +11,7 @@ on:
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
+      - 'services/media-fetcher/**'
       - 'docker-commands/**'
       - 'scripts/ci/**'
       - 'package.json'
@@ -33,6 +34,7 @@ on:
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
+      - 'services/media-fetcher/**'
       - 'docker-commands/**'
       - 'scripts/ci/**'
       - 'package.json'
@@ -76,12 +78,21 @@ jobs:
         include:
           - component: backend
             dockerfile: Dockerfile.backend
+            context: .
           - component: frontend
             dockerfile: Dockerfile.frontend
+            context: .
           - component: sidecar
             dockerfile: Dockerfile.sidecar
+            context: .
+          # Isolated radio egress helper (Landlock ABI >= 4). Build context is
+          # services/media-fetcher (same as publish-images.yml / compose).
+          - component: media-fetcher
+            dockerfile: services/media-fetcher/Dockerfile
+            context: services/media-fetcher
           - component: all-in-one
             dockerfile: Dockerfile.all-in-one
+            context: .
 
     steps:
       - name: Checkout
@@ -99,7 +110,7 @@ jobs:
       - name: Build final image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           load: true
           push: false
@@ -182,6 +193,42 @@ jobs:
               /usr/local/bin/apply-schema.sh
               test -s /tmp/runtime-smoke.db
             '
+
+      # Non-networked smoke only: binaries, Landlock wrapper, entrypoints, and
+      # static ESM graph. Do not start the proxy/fetcher against remote media.
+      - name: Validate media-fetcher runtime
+        if: matrix.component == 'media-fetcher'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ts6-security-media-fetcher:${{ env.SCAN_SHA }}"
+          docker run --rm --entrypoint sh "$IMAGE" -ec "
+            set -eu
+            command -v ffmpeg >/dev/null
+            ffmpeg -version | head -n1
+            test -x /usr/local/bin/ll-wrap
+            for f in \
+              /app/fetcher.mjs \
+              /app/proxy.mjs \
+              /app/policy.mjs \
+              /app/landlock.mjs \
+              /app/response-headers.mjs \
+              /app/ffmpeg-args.mjs \
+              /app/token.mjs \
+              /app/pending-job.mjs \
+              /app/peer-pid.mjs \
+              /app/socket-guards.mjs \
+              /app/install-token.mjs \
+              /app/reserved-networks.json
+            do
+              test -f \"\$f\"
+            done
+            # Resolve relative imports offline (no network, no listen).
+            node --check /app/fetcher.mjs
+            node --check /app/proxy.mjs
+            node --input-type=module -e 'await import(\"/app/response-headers.mjs\"); await import(\"/app/policy.mjs\"); await import(\"/app/landlock.mjs\"); await import(\"/app/ffmpeg-args.mjs\"); console.log(\"media-fetcher ESM graph ok\");'
+            echo 'Validated media-fetcher runtime layout'
+          "
 
       # trivy-action v0.36.0 defaults to Trivy v0.70.0. Pin the current
       # scanner binary separately while keeping the action commit SHA pinned.
