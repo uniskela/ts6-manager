@@ -7,14 +7,24 @@
  * concurrent invalid refresh storms (independent review F-1).
  *
  * Policy:
- * - Delete rows with `expiresAt` in the past (consumed rows keep `expiresAt` from
- *   mint/rotate, so the reuse window ends there).
+ * - Delete rows with `expiresAt` in the past (live and consumed keep their mint/rotate
+ *   `expiresAt`; this purge is retention only).
  * - Chunked deletes to keep each write short on SQLite.
  * - Tick every 15 minutes; overlapping ticks are skipped.
  * - Tick failures are logged and never surface to login/refresh/reset/disable.
  *
+ * Replay detection vs expiry (do not conflate):
+ * - An *unconsumed* token past `expiresAt` is rejected without family revoke.
+ * - A *consumed* token (`replacedBy` set) is checked for reuse **before** the
+ *   expiry branch. While that row still exists, presenting it again revokes the
+ *   family even if `expiresAt` is already past. Background retention eventually
+ *   removes the row; until then replay detection remains active. There is no
+ *   grace period that skips revoke after expiry.
+ *
  * Limitations:
  * - Between ticks, expired rows may linger (bounded by the interval + chunk lag).
+ * - `stopRefreshTokenRetention()` cancels future ticks; it does not wait for an
+ *   in-flight sweep to finish.
  * - Single-process design: multiple backends each run their own tick (idempotent).
  * - No row-count cap beyond expiry; volume tracks active sessions × 7-day TTL.
  */

@@ -4,10 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import express from 'express';
-import { authRoutes } from './auth.routes.js';
-import { errorHandler } from '../middleware/error-handler.js';
-import { listen } from './test-support/listen-loopback.js';
+import { postAuthRefresh, withAuthApp } from './test-support/mount-auth-app.js';
 
 type UserRow = {
   id: number;
@@ -32,40 +29,11 @@ function createReplayStore(options: {
   const users = new Map<number, UserRow>([
     [1, { id: 1, username: 'alice', role: 'admin', enabled: true, passwordHash: 'x' }],
   ]);
+  const expiresAt = new Date(Date.now() + 86_400_000);
   const refreshTokens = new Map<number, RefreshRow>([
-    [
-      1,
-      {
-        id: 1,
-        token: 'R0',
-        userId: 1,
-        expiresAt: new Date(Date.now() + 86_400_000),
-        family: 'fam-1',
-        replacedBy: 'R1',
-      },
-    ],
-    [
-      2,
-      {
-        id: 2,
-        token: 'R1',
-        userId: 1,
-        expiresAt: new Date(Date.now() + 86_400_000),
-        family: 'fam-1',
-        replacedBy: null,
-      },
-    ],
-    [
-      3,
-      {
-        id: 3,
-        token: 'other',
-        userId: 1,
-        expiresAt: new Date(Date.now() + 86_400_000),
-        family: 'fam-other',
-        replacedBy: null,
-      },
-    ],
+    [1, { id: 1, token: 'R0', userId: 1, expiresAt, family: 'fam-1', replacedBy: 'R1' }],
+    [2, { id: 2, token: 'R1', userId: 1, expiresAt, family: 'fam-1', replacedBy: null }],
+    [3, { id: 3, token: 'other', userId: 1, expiresAt, family: 'fam-other', replacedBy: null }],
   ]);
 
   const prisma: any = {
@@ -108,33 +76,25 @@ function createReplayStore(options: {
   return { prisma, refreshTokens };
 }
 
+function lockedBusyError(): Error {
+  const err = new Error('database is locked');
+  (err as { code?: string }).code = 'P2034';
+  return err;
+}
+
 describe('P1 F-1 replay-family revoke busy retry', () => {
   it('retries transient database-locked errors then revokes the family', async () => {
     let attempts = 0;
     const { prisma, refreshTokens } = createReplayStore({
       deleteManyImpl: async () => {
         attempts += 1;
-        if (attempts < 3) {
-          const err = new Error('database is locked');
-          (err as { code?: string }).code = 'P2034';
-          throw err;
-        }
+        if (attempts < 3) throw lockedBusyError();
         return { count: 2 };
       },
     });
 
-    const app = express();
-    app.use(express.json());
-    app.locals.prisma = prisma;
-    app.use('/api/auth', authRoutes);
-    app.use(errorHandler);
-    const { base, close } = await listen(app);
-    try {
-      const res = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'R0' }),
-      });
+    await withAuthApp(prisma, async (base) => {
+      const res = await postAuthRefresh(base, 'R0');
       assert.equal(res.status, 401);
       assert.equal(attempts, 3);
       assert.equal(
@@ -145,9 +105,7 @@ describe('P1 F-1 replay-family revoke busy retry', () => {
         [...refreshTokens.values()].some((r) => r.family === 'fam-other'),
         true,
       );
-    } finally {
-      await close();
-    }
+    });
   });
 
   it('does not return auth success when revoke fails persistently', async () => {
@@ -155,24 +113,12 @@ describe('P1 F-1 replay-family revoke busy retry', () => {
     const { prisma, refreshTokens } = createReplayStore({
       deleteManyImpl: async () => {
         attempts += 1;
-        const err = new Error('database is locked');
-        (err as { code?: string }).code = 'P2034';
-        throw err;
+        throw lockedBusyError();
       },
     });
 
-    const app = express();
-    app.use(express.json());
-    app.locals.prisma = prisma;
-    app.use('/api/auth', authRoutes);
-    app.use(errorHandler);
-    const { base, close } = await listen(app);
-    try {
-      const res = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'R0' }),
-      });
+    await withAuthApp(prisma, async (base) => {
+      const res = await postAuthRefresh(base, 'R0');
       assert.notEqual(res.status, 200);
       assert.ok(res.status >= 500 || res.status === 401);
       assert.equal(attempts, 3);
@@ -181,9 +127,7 @@ describe('P1 F-1 replay-family revoke busy retry', () => {
         [...refreshTokens.values()].some((r) => r.token === 'R1'),
         true,
       );
-    } finally {
-      await close();
-    }
+    });
   });
 
   it('does not retry non-busy failures', async () => {
@@ -195,22 +139,10 @@ describe('P1 F-1 replay-family revoke busy retry', () => {
       },
     });
 
-    const app = express();
-    app.use(express.json());
-    app.locals.prisma = prisma;
-    app.use('/api/auth', authRoutes);
-    app.use(errorHandler);
-    const { base, close } = await listen(app);
-    try {
-      const res = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'R0' }),
-      });
+    await withAuthApp(prisma, async (base) => {
+      const res = await postAuthRefresh(base, 'R0');
       assert.notEqual(res.status, 200);
       assert.equal(attempts, 1);
-    } finally {
-      await close();
-    }
+    });
   });
 });

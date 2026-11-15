@@ -76,4 +76,6 @@ Do **not** land P1-B server alone ahead of the frontend coordination. Merges to 
 
 Retention now runs via `packages/backend/src/auth/refresh-token-retention.ts`: a 15-minute background tick with chunked deletes (`expiresAt < now`). Tick failures are logged and do not break login, refresh, reset, or disable. Replay-family revoke outside the rotate transaction uses a bounded (3-attempt) retry for transient SQLite busy/timeout only; persistent revoke failure still rejects authentication (never returns tokens).
 
-**Limitations:** expired rows may linger until the next successful tick; multi-replica deployments each run their own idempotent tick; no separate row-count cap beyond the 7-day token TTL.
+**Replay vs expiry (actual `/refresh` order):** unconsumed tokens past `expiresAt` are rejected (and the single row may be deleted) without family revoke. Consumed tokens (`replacedBy` set) are handled on the reuse path **before** the expiry check, so a retained consumed row can still revoke its family after the wall-clock expiry until background retention removes it. That is not a grace window and must not be weakened without a separate security review.
+
+**Limitations:** expired rows may linger until the next successful tick; stopping the scheduler cancels future ticks but does not drain an in-flight sweep; multi-replica deployments each run their own idempotent tick; no separate row-count cap beyond the 7-day token TTL.
