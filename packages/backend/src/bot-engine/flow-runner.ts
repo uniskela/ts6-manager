@@ -33,6 +33,31 @@ interface FlowInfo {
   flowData: FlowDefinition;
 }
 
+/**
+ * Parse `onlinetime_last_<cldbid>`: a JSON map of clid → seconds counted for that
+ * connection. Older versions stored one number for the whole user (`legacy`).
+ */
+function parseRankSessions(raw: string): { byClid: Record<string, number>; legacy?: number } {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const byClid: Record<string, number> = {};
+      if (parsed && typeof parsed === 'object') {
+        for (const [clid, value] of Object.entries(parsed)) {
+          const sec = Number(value);
+          if (Number.isFinite(sec) && sec >= 0) byClid[clid] = sec;
+        }
+      }
+      return { byClid };
+    } catch {
+      return { byClid: {} };
+    }
+  }
+  const legacy = parseFloat(trimmed);
+  return { byClid: {}, legacy: Number.isFinite(legacy) && legacy > 0 ? legacy : undefined };
+}
+
 export class FlowRunner {
   private activeRuns = new Map<number, Set<AbortController>>();
   private pendingReminders = new Map<string, number>();
@@ -760,8 +785,7 @@ export class FlowRunner {
     const clients = await client.executePost(ctx.sid, 'clientlist', { '-groups': '' });
     if (!Array.isArray(clients)) return;
 
-    // One entry per database id: a user with several connections must not be
-    // counted twice, and their per-session counter must not flip between clids.
+    // One entry per database id, so a user with several connections is counted once.
     const users = new Map<string, { clids: Array<{ clid: string; listedMs: unknown }>; groups: Set<string> }>();
     for (const cl of clients) {
       if (String(cl.client_type) === '1') continue;
@@ -777,28 +801,37 @@ export class FlowRunner {
 
     let promoted = 0;
     for (const [cldbid, user] of users) {
-      // Current session length in seconds: the longest of this user's connections.
-      let connectionTimeSec: number | undefined;
-      for (const { clid, listedMs } of user.clids) {
-        const ms = await this.readConnectedTimeMs(ctx, client, clid, listedMs);
-        if (ms !== undefined) connectionTimeSec = Math.max(connectionTimeSec ?? 0, ms / 1000);
-      }
-      if (connectionTimeSec === undefined) continue; // left before we could read the session
-
       // Get total online time from BotVariable (accumulate via cron)
       const varName = `onlinetime_${cldbid}`;
       const lastKey = `onlinetime_last_${cldbid}`;
-      const storedStr = await ctx.getVariable(varName);
-      const storedSeconds = parseFloat(storedStr) || 0;
-      let lastCounted = parseFloat(await ctx.getVariable(lastKey)) || 0;
-      // Session restarted — reset per-session counter
-      if (connectionTimeSec < lastCounted) lastCounted = 0;
-      const delta = Math.max(0, connectionTimeSec - lastCounted);
+      const storedSeconds = parseFloat(await ctx.getVariable(varName)) || 0;
+      const lastCounted = parseRankSessions(await ctx.getVariable(lastKey));
+
+      // Seconds counted so far are tracked per clid. The user was online for the
+      // wall time since the last run, which is the largest per-connection advance:
+      // overlapping connections must not add up, and a surviving shorter
+      // connection must not be re-credited when the longest one drops.
+      const sessions: Record<string, number> = {};
+      let delta = 0;
+      for (const { clid, listedMs } of user.clids) {
+        // Sequential on purpose: WebQueryClient runs commands one at a time with a
+        // fixed gap, so parallel calls are not faster and would crowd out other Query traffic.
+        const ms = await this.readConnectedTimeMs(ctx, client, clid, listedMs); // NOSONAR: the query client serializes commands anyway
+        if (ms === undefined) continue; // left before we could read the session
+        const sec = ms / 1000;
+        sessions[clid] = sec;
+        let last = lastCounted.byClid[clid] ?? lastCounted.legacy ?? 0;
+        // Session restarted (or the clid was reused) — reset per-session counter
+        if (sec < last) last = 0;
+        delta = Math.max(delta, sec - last);
+      }
+      if (Object.keys(sessions).length === 0) continue;
+
       const totalSeconds = storedSeconds + delta;
       const totalHours = totalSeconds / 3600;
 
       await ctx.setVariable(varName, String(totalSeconds));
-      await ctx.setVariable(lastKey, String(connectionTimeSec));
+      await ctx.setVariable(lastKey, JSON.stringify(sessions));
 
       for (const rank of ranks) {
         if (totalHours >= rank.hours && !user.groups.has(String(rank.groupId))) {

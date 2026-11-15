@@ -43,7 +43,7 @@ function makeHarness(opts: {
     setTemp: (name: string, value: unknown) => { temps.set(name, value); },
   };
 
-  return { vars, temps, posts, infoCalls, client, ctx, connectedMs: opts.connectedMs };
+  return { vars, temps, posts, infoCalls, client, ctx, connectedMs: opts.connectedMs, clients: opts.clients };
 }
 
 async function runRankCheck(h: ReturnType<typeof makeHarness>, ranks: unknown) {
@@ -66,7 +66,7 @@ test('rankCheck reads session time from clientinfo when clientlist omits it', as
 
   assert.deepEqual(h.infoCalls, ['5']);
   assert.equal(Number(h.vars.get('onlinetime_42')), 7200);
-  assert.equal(Number(h.vars.get('onlinetime_last_42')), 7200);
+  assert.deepEqual(JSON.parse(h.vars.get('onlinetime_last_42')!), { '5': 7200 });
   const adds = h.posts.filter((p) => p.command === 'servergroupaddclient');
   assert.deepEqual(adds.map((p) => p.params), [{ sgid: '7', cldbid: '42' }]);
   assert.equal(h.temps.get('rankPromotedCount'), 1);
@@ -108,6 +108,44 @@ test('rankCheck counts one session per database id when a user has several conne
   h.connectedMs['6'] = HOUR_MS + 600_000;
   await runRankCheck(h, ranks);
   assert.equal(Number(h.vars.get('onlinetime_42')), 36600);
+
+  // The longest connection drops; the surviving one advanced 600 s. Its earlier
+  // time overlapped the long session, so only those 600 s are new.
+  h.clients.splice(0, 1);
+  h.connectedMs['6'] = HOUR_MS + 1_200_000;
+  await runRankCheck(h, ranks);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 37200);
+  assert.deepEqual(JSON.parse(h.vars.get('onlinetime_last_42')!), { '6': 4800 });
+});
+
+test('rankCheck does not add a new overlapping connection on top of a running one', async () => {
+  const h = makeHarness({
+    clients: [{ clid: '5', client_database_id: '42', client_type: '0', client_servergroups: '8' }],
+    connectedMs: { '5': HOUR_MS },
+  });
+  const ranks = [{ hours: 1000, groupId: '7' }];
+  await runRankCheck(h, ranks);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 3600);
+
+  // 600 s later the user also joined from a second device 300 s ago.
+  h.clients.push({ clid: '9', client_database_id: '42', client_type: '0', client_servergroups: '8' });
+  h.connectedMs['5'] = HOUR_MS + 600_000;
+  h.connectedMs['9'] = 300_000;
+  await runRankCheck(h, ranks);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 4200);
+});
+
+test('rankCheck reads a numeric last-counted value stored by older versions', async () => {
+  const h = makeHarness({
+    clients: [{ clid: '5', client_database_id: '42', client_type: '0', client_servergroups: '8' }],
+    connectedMs: { '5': 1_500_000 },
+  });
+  h.vars.set('onlinetime_42', '900');
+  h.vars.set('onlinetime_last_42', '900');
+
+  await runRankCheck(h, [{ hours: 1000, groupId: '7' }]);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 1500);
+  assert.deepEqual(JSON.parse(h.vars.get('onlinetime_last_42')!), { '5': 1500 });
 });
 
 test('rankCheck skips query clients and clients that left before clientinfo', async () => {
