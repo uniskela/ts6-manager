@@ -1,10 +1,20 @@
 # Discord voice bridge — compatibility and trust contract
 
-Target: **v1.12.0**. Default: **disabled**. Status: **accepted** ([#503](https://github.com/uniskela/ts6-manager/pull/503)); D1–D6 implementation and live acceptance still open.
+Target: **later release** (after v1.12.0 and v2.0.0 under Option B). Default: **disabled**. Status: **accepted** ([#503](https://github.com/uniskela/ts6-manager/pull/503)); D1–D6 implementation and live acceptance still open.
 
-This is the Bridge-K contract. Do not shrink 5+1 to a single-bot product. Do not move incomplete bridge work out of v1.12.0 to ship sooner. Do not amend this contract without a separate owner-approved change (draft D2 amendments: [#563](https://github.com/uniskela/ts6-manager/pull/563)). Escalate blockers.
+This is the Bridge-K contract. Do not shrink 5+1 to a single-bot product. Do not amend this contract without a separate owner-approved change (draft D2 amendments: [#563](https://github.com/uniskela/ts6-manager/pull/563)). Escalate blockers.
 
-Listener remote ([#442](https://github.com/uniskela/ts6-manager/issues/442)) and Commands & Radio stay in v1.12.0 with this bridge.
+### Release targeting (Option B — 2026-11-15)
+
+Owner-approved sequence:
+
+1. **v1.12.0** — Listener Remote (+ non-breaking); **not** this bridge.
+2. **v2.0.0** — Commands & Radio ([#658](https://github.com/uniskela/ts6-manager/pull/658)); **excludes D1**.
+3. **Later** — this Discord ↔ TeamSpeak voice bridge (D1–D6).
+
+**Historical (superseded 2026-11-10):** Bridge-K, Commands & Radio, and Listener Remote were held together as a single v1.12.0 contract (“do not move incomplete bridge work out of v1.12.0 to ship sooner”). That combined-target wording is retained here only as history; Option B supersedes it.
+
+Listener remote ships in v1.12.0. Commands & Radio ship in v2.0.0. Neither waits on D1–D6.
 
 Companion spec: [superpowers/specs/2026-10-23-discord-voice-bridge-design.md](superpowers/specs/2026-10-23-discord-voice-bridge-design.md).
 
@@ -45,7 +55,7 @@ Compatibility CI today does not certify voice playback. D1 and D6 are real-serve
 8. The shared TeamSpeak client does not receive its own voice.
 9. Discord → TeamSpeak is one mix into that shared client. It must not appear again on any Discord slot or overflow bot.
 
-People who sit in both rooms will hear themselves. That is documented, not linked, in v1.12.0.
+People who sit in both rooms will hear themselves. That is documented, not linked, when the bridge product ships.
 
 ## Trust boundary
 

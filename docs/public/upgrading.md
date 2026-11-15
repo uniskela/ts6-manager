@@ -19,6 +19,53 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Upgrading to 1.12.0
+
+This section covers upgrading from 1.11.4 (or later 1.11.x) to **1.12.0**. Skip it if you are installing fresh.
+
+**Scope.** 1.12.0 ships Listener Remote growth (playlist browse/request, search, playlist voting, related fixes) and other non-breaking changes already on `main`. It does **not** ship Discord Commands & Radio or the Discord ↔ TeamSpeak voice bridge.
+
+**Back up the database before starting the 1.12.0 backend.** Stop the backend, then copy its persistent data volume (`ts6webui.db`, journal/WAL files, uploaded IPTV playlists, bot avatars, hosted channel banners) and keep the previous image tag until the upgrade is verified.
+
+After upgrading:
+
+- Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting).
+- The remote remains its own page; reverse-proxy and `TRUST_PROXY` guidance from 1.11.x still apply ([Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits)).
+- Music, YouTube, and radio behaviour for **1.12.0** match 1.11.x (no media-fetcher requirement in this release).
+
+Rolling back needs the previous image tag and the matching database backup.
+
+### Upgrading to 2.0.0
+
+This section covers upgrading to **2.0.0** (Commands & Radio). Prefer upgrading from a released **1.12.0** install; upgrading from 1.11.4 is also supported after the usual backup.
+
+**Breaking change for radio playback.** Remote radio no longer starts ffmpeg inside the backend. Every radio entry point (TeamSpeak, Discord, web, Auto-DJ, listener requests, queue next/prev) uses the isolated media fetcher. If the fetcher is not running, radio fails with *Radio playback needs the isolated media fetcher. Saved stations are unchanged.* There is no silent fallback and no public `MEDIA_FETCHER=legacy` override.
+
+Treat 2.0.0 as a **major** release because existing installs lose radio until the overlay is added. Station rows are not modified. Music and YouTube are unchanged.
+
+**Supported deployment for radio**
+
+| Requirement | Detail |
+|-------------|--------|
+| Compose | Split stack: `docker-compose.yml` **and** `docker-compose.media-fetcher.yml` (Compose v2). |
+| Host | Linux with Landlock **ABI ≥ 4** (typically Linux **6.7+**). |
+| Token | `.media-fetcher-token` created with `umask 077` (mode **600**, not 644); keep owner-only. |
+| Images | Prefer release `MEDIA_FETCHER_IMAGE` from GHCR when publishing is complete; local build from `services/media-fetcher` is for development. |
+| All-in-one / native | Radio **fails closed** until an equivalent fetcher is running. Do not expect the all-in-one image alone to play radio after 2.0.0. |
+
+`MEDIA_EGRESS_PROXY=off` is still not a way to play radio.
+
+**What to do**
+
+1. Keep the existing database volume. Station records stay as they are.
+2. Add the media-fetcher overlay to the split stack (`docker-compose.yml` + `docker-compose.media-fetcher.yml`). Operator detail ships with the Commands & Radio docs set (`radio-fetcher.md` on the release branch / tag).
+3. Create `.media-fetcher-token` with `umask 077` and confirm Landlock ABI ≥ 4 on the host.
+4. Recreate the stack; play a saved station.
+
+**Discord Commands & Radio** (optional) needs a Discord application, HTTPS interactions URL, and guild binding. It does **not** enable voice bridging. Voice bridge D1–D6 remains a later release.
+
+**Back up before upgrading**, and again before rolling back. Restore the previous image tag **and** matching database snapshot together.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.

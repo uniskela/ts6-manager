@@ -130,19 +130,29 @@ Shipped streaming work is listed under v1.11.0 above.
 
 ### Listener remote growth — v1.12.0
 
-On `main` for the upcoming 1.12.0 release; tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442).
+On `main` for the upcoming **1.12.0** release; tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442).
+
+**Owner release sequence (Option B, 2026-11-15):** v1.12.0 ships Listener Remote and related non-breaking work only. Commands & Radio are **v2.0.0**. Discord ↔ TeamSpeak voice bridge D1–D6 is a **later** release. This supersedes the earlier full-scope v1.12.0 plan.
 
 - The listener remote adds YouTube Music search, browsing of playlists shared with it, a longer-than-15-minutes and no-live rule for search results and pasted links, and **Listener remote** visibility on each playlist. Playlist voting stays off until an admin enables it. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting).
 - The remote is served as its own page. See [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits).
 - PIN sign-in and the installable app stay in v1.12.x ([#464](https://github.com/uniskela/ts6-manager/issues/464)).
 
-This lane is unchanged by the Discord bridge.
+### Discord Commands & Radio — v2.0.0
 
-### Discord voice bridge — v1.12.0
+Not released yet. Candidate: draft [#658](https://github.com/uniskela/ts6-manager/pull/658) (Path A; **excludes** unfinished voice-bridge D1).
 
-Not released. Not in manager beta images. A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Laboratory DAVE sessions do not make the bridge a product: remaining live audio and failover rows are still open. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
+- Self-hosted Discord slash commands for TeamSpeak status and music/radio (operator-configured; not one-click onboarding).
+- **Breaking for radio:** remote radio needs the isolated media-fetcher overlay on a supported Linux/Landlock host; without it, radio fails closed. Station rows are unchanged. See [Upgrading to 2.0.0](upgrading.md#upgrading-to-200).
+- Voice bridging is **not** included. `/ts bridge` stays unavailable until a later bridge release.
 
-Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460).
+### Discord voice bridge — later release
+
+Not released. Not in manager beta images. Not part of v1.12.0 or v2.0.0 under Option B.
+
+A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Laboratory DAVE sessions do not make the bridge a product: remaining live audio and failover rows are still open. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
+
+Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460) or into Commands & Radio.
 
 ## Explicit scope boundaries
 
@@ -150,4 +160,4 @@ The fork does not adopt features that weaken the sidecar/encryption boundaries o
 
 SSO absorption and opportunistic framework migrations remain separate decisions.
 
-A supported Discord voice product, if it ships later, stays optional and separate from stable 1.11. It does not absorb upstream Discord/SSO/i18n suites.
+A supported Discord voice product, if it ships later, stays optional and separate from stable 1.12 / 2.0 Commands & Radio. It does not absorb upstream Discord/SSO/i18n suites.
