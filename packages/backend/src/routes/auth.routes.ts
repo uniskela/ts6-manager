@@ -24,19 +24,52 @@ const meRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+type RefreshTokenWriter = {
+  refreshToken: {
+    deleteMany: (args: {
+      where: { userId: number; family: string | null };
+    }) => Promise<{ count: number }>;
+  };
+};
+
 /** Revoke one refresh-token family for a user. Null family = legacy rows only. */
 async function revokeRefreshFamily(
-  tx: {
-    refreshToken: {
-      deleteMany: (args: {
-        where: { userId: number; family: string | null };
-      }) => Promise<{ count: number }>;
-    };
-  },
+  tx: RefreshTokenWriter,
   userId: number,
   family: string | null,
 ): Promise<void> {
   await tx.refreshToken.deleteMany({ where: { userId, family } });
+}
+
+/** SQLite write contention — retry only these, never unrelated failures. */
+function isSqliteBusy(err: unknown): boolean {
+  const anyErr = err as { code?: string; message?: string } | null;
+  return (
+    anyErr?.code === 'P2034' ||
+    /database is locked|SQLITE_BUSY|timed out|timeout/i.test(String(anyErr?.message ?? err ?? ''))
+  );
+}
+
+/**
+ * Family revoke on the replay path sits outside the rotate transaction so the
+ * AppError cannot roll it back. Under concurrent invalid-refresh storms this
+ * write previously timed out (F-1 companion). Retry a few times for transient
+ * SQLite busy only; persistent failure still rejects auth (never 200).
+ */
+async function revokeRefreshFamilyBusyRetry(
+  prisma: RefreshTokenWriter,
+  userId: number,
+  family: string | null,
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await revokeRefreshFamily(prisma, userId, family);
+      return;
+    } catch (err) {
+      if (attempt >= 3 || !isSqliteBusy(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 40 * attempt));
+    }
+  }
 }
 
 authRoutes.post('/login', async (req: Request, res: Response, next) => {
@@ -102,8 +135,9 @@ authRoutes.post('/refresh', async (req: Request, res: Response, next) => {
 
     const prisma = req.app.locals.prisma;
 
-    // Bounded retention: drop expired live and consumed rows (reuse window ends at expiresAt).
-    await prisma.refreshToken.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+    // Expired-row retention runs on a background tick (see auth/refresh-token-retention.ts).
+    // Do not full-table deleteMany here: concurrent invalid refreshes contended with
+    // admin reset/disable and replay-family revoke (independent review F-1).
 
     // Replay must revoke in a committed write — throwing inside the rotate transaction
     // would roll the family delete back with the AppError.
@@ -118,7 +152,7 @@ authRoutes.post('/refresh', async (req: Request, res: Response, next) => {
       console.warn(
         `[SECURITY] Refresh token reuse detected for user ${existing.userId} family=${existing.family ?? 'null'}. Revoking family.`,
       );
-      await revokeRefreshFamily(prisma, existing.userId, existing.family);
+      await revokeRefreshFamilyBusyRetry(prisma, existing.userId, existing.family);
       throw new AppError(401, 'Invalid refresh token');
     }
     if (existing.expiresAt < new Date() || !existing.user.enabled) {

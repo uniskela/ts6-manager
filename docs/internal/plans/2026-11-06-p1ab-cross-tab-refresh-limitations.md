@@ -69,3 +69,11 @@ Under the current opaque-refresh protocol, a second POST that presents already-c
 2. **PR2 — P1-B + frontend** atomic rotation, family-scoped replay, password concurrency, Web Lock + BroadcastChannel (depends on PR1).
 
 Do **not** land P1-B server alone ahead of the frontend coordination. Merges to `main` run CI/Release Please bookkeeping only; **images publish only when Release Please creates a release** (`release_created`), not on ordinary feature merges.
+
+## Expired refresh-token retention (F-1, 2026-11-15)
+
+`/api/auth/refresh` no longer runs an unconditional full-table `deleteMany` for expired rows. That write contended with admin reset/disable and replay-family revoke under concurrent invalid refresh traffic.
+
+Retention now runs via `packages/backend/src/auth/refresh-token-retention.ts`: a 15-minute background tick with chunked deletes (`expiresAt < now`). Tick failures are logged and do not break login, refresh, reset, or disable. Replay-family revoke outside the rotate transaction uses a bounded (3-attempt) retry for transient SQLite busy/timeout only; persistent revoke failure still rejects authentication (never returns tokens).
+
+**Limitations:** expired rows may linger until the next successful tick; multi-replica deployments each run their own idempotent tick; no separate row-count cap beyond the 7-day token TTL.
