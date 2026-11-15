@@ -757,21 +757,39 @@ export class FlowRunner {
     // Sort ranks descending by hours so highest rank is checked first
     ranks.sort((a, b) => b.hours - a.hours);
 
-    const clients = await client.executePost(ctx.sid, 'clientlist', { '-times': '', '-groups': '' });
+    const clients = await client.executePost(ctx.sid, 'clientlist', { '-groups': '' });
     if (!Array.isArray(clients)) return;
 
-    let promoted = 0;
+    // One entry per database id: a user with several connections must not be
+    // counted twice, and their per-session counter must not flip between clids.
+    const users = new Map<string, { clids: Array<{ clid: string; listedMs: unknown }>; groups: Set<string> }>();
     for (const cl of clients) {
       if (String(cl.client_type) === '1') continue;
       const cldbid = String(cl.client_database_id);
+      let user = users.get(cldbid);
+      if (!user) {
+        user = { clids: [], groups: new Set() };
+        users.set(cldbid, user);
+      }
+      user.clids.push({ clid: String(cl.clid), listedMs: cl.connection_connected_time });
+      for (const g of String(cl.client_servergroups || '').split(',')) if (g) user.groups.add(g);
+    }
+
+    let promoted = 0;
+    for (const [cldbid, user] of users) {
+      // Current session length in seconds: the longest of this user's connections.
+      let connectionTimeSec: number | undefined;
+      for (const { clid, listedMs } of user.clids) {
+        const ms = await this.readConnectedTimeMs(ctx, client, clid, listedMs);
+        if (ms !== undefined) connectionTimeSec = Math.max(connectionTimeSec ?? 0, ms / 1000);
+      }
+      if (connectionTimeSec === undefined) continue; // left before we could read the session
 
       // Get total online time from BotVariable (accumulate via cron)
       const varName = `onlinetime_${cldbid}`;
       const lastKey = `onlinetime_last_${cldbid}`;
       const storedStr = await ctx.getVariable(varName);
       const storedSeconds = parseFloat(storedStr) || 0;
-      // connection_connected_time is ms since current session start
-      const connectionTimeSec = (parseInt(cl.connection_connected_time) || 0) / 1000;
       let lastCounted = parseFloat(await ctx.getVariable(lastKey)) || 0;
       // Session restarted — reset per-session counter
       if (connectionTimeSec < lastCounted) lastCounted = 0;
@@ -782,10 +800,8 @@ export class FlowRunner {
       await ctx.setVariable(varName, String(totalSeconds));
       await ctx.setVariable(lastKey, String(connectionTimeSec));
 
-      const clientGroups = String(cl.client_servergroups || '').split(',');
-
       for (const rank of ranks) {
-        if (totalHours >= rank.hours && !clientGroups.includes(rank.groupId)) {
+        if (totalHours >= rank.hours && !user.groups.has(String(rank.groupId))) {
           try {
             await client.executePost(ctx.sid, 'servergroupaddclient', { sgid: rank.groupId, cldbid });
             promoted++;
@@ -795,6 +811,26 @@ export class FlowRunner {
       }
     }
     ctx.setTemp('rankPromotedCount', promoted);
+  }
+
+  /**
+   * Milliseconds since the client's current session started. `clientlist -times`
+   * does not include connection_connected_time (TS6 WebQuery, TS3 ServerQuery),
+   * so fall back to clientinfo. Returns undefined when the client already left.
+   */
+  private async readConnectedTimeMs(ctx: ExecutionContext, client: WebQueryClient, clid: string, listedMs: unknown): Promise<number | undefined> {
+    if (listedMs !== undefined && listedMs !== null && listedMs !== '') {
+      const ms = Number(listedMs);
+      if (Number.isFinite(ms) && ms >= 0) return ms;
+    }
+    try {
+      const info = await client.execute(ctx.sid, 'clientinfo', { clid });
+      const ms = Number(info?.[0]?.connection_connected_time);
+      return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
+    } catch (err) {
+      if (err instanceof TSApiError && (err.code === 512 || /invalid client\s?id/i.test(err.message))) return undefined;
+      throw err;
+    }
   }
 
   private async executeTempChannelCleanup(data: TempChannelCleanupActionData, ctx: ExecutionContext, client: WebQueryClient): Promise<void> {
