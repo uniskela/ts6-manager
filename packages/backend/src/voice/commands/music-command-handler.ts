@@ -258,7 +258,8 @@ export class MusicCommandHandler {
     return routing.replyChannelForDedupe(this.context, botId, userClid, bot);
   }
 
-  private virtualServerIdForBot(botId: number): number {
+  /** Shared with Discord music deps — same SID map as TeamSpeak chat commands. */
+  virtualServerIdForBot(botId: number): number {
     return routing.virtualServerIdForBot(this.context, botId);
   }
 

@@ -151,11 +151,11 @@ reject_image_collision() {
   local components
   if [ -n "$component" ]; then
     case "$component" in
-      backend|frontend|sidecar|all-in-one) components="$component" ;;
+      backend|frontend|sidecar|media-fetcher|all-in-one) components="$component" ;;
       *) die "reject-image-collision unknown component: $component" ;;
     esac
   else
-    components="backend frontend sidecar all-in-one"
+    components="backend frontend sidecar media-fetcher all-in-one"
   fi
   local suffix image existing
   for component in $components; do

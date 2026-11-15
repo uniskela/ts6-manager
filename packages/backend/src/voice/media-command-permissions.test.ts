@@ -48,6 +48,8 @@ describe('media command permissions', () => {
       assert.equal(authorizeMediaCommand(restricted, command, {}), true, command);
     }
     assert.equal(authorizeMediaCommand(restricted, 'voteskip', {}), true, 'listener eligibility belongs to the vote service');
+    assert.equal(authorizeMediaCommand(restricted, 'resume', { uid: 'human', serverGroupIds: [12] }), true);
+    assert.equal(authorizeMediaCommand(restricted, 'resume', {}), false);
     assert.equal(authorizeMediaCommand(restricted, 'unknown', {}), false);
     assert.equal(authorizeMediaCommand(restricted, '__proto__', {}), false);
     assert.deepEqual(Object.keys(MEDIA_COMMAND_GROUP_BY_COMMAND).sort(), [...BUILTIN_CHAT_COMMANDS].sort());

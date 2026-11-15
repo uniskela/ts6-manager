@@ -22,9 +22,30 @@
 | `SIDECAR_BINARY_PATH` | — | Optional sidecar binary path for non-standard deployments |
 | `YT_COOKIE_FILE` | — | Optional Netscape-format yt-dlp cookie file |
 | `YT_DLP_PATH` | `/usr/local/bin/yt-dlp` | Absolute path to the yt-dlp executable used by music, video and diagnostics. For a nonstandard or native install, set the full executable path (e.g. `/usr/bin/yt-dlp` or `C:\Tools\yt-dlp.exe`). Use an administrator-controlled directory that untrusted users cannot write; inherited `PATH` is not used to locate yt-dlp |
-| `MEDIA_EGRESS_PROXY` | `on` | Every media download (yt-dlp for music and video, and ffmpeg reading a track URL yt-dlp resolved) connects through a checking proxy inside the backend. It allows only public addresses on ports 80 and 443 and checks every redirect. `off` is an **emergency setting only**: downloads then connect directly without those checks, only YouTube links and searches are accepted, the backend logs a warning at startup and while downloads run, and the Runtime / media check (Settings → YouTube, Media Library → Library) shows yt-dlp as failed. See [Security — Media downloads](security.md#media-downloads) |
+| `MEDIA_EGRESS_PROXY` | `on` | Every media download (yt-dlp for music and video, and ffmpeg reading a track URL yt-dlp resolved) connects through a checking proxy inside the backend. It allows only public addresses on ports 80 and 443 and checks every redirect. ICY metadata uses the same address policy plus Icecast ports 8000, 8008, 8080 and 8443. Remote radio audio does **not** use this proxy; it requires the isolated media fetcher. `off` is an **emergency setting only**: only YouTube links and searches then connect directly. Radio and other non-YouTube URLs fail closed (no direct connection). The backend logs a warning at startup and while downloads run, and the Runtime / media check (Settings → YouTube, Media Library → Library) shows yt-dlp as failed. See [Security — Media downloads](security.md#media-downloads) and [Radio fetcher](radio-fetcher.md) |
+| `MEDIA_FETCHER_SOCK` | `/jobs/jobs.sock` | Unix job socket for remote radio. Required for radio playback; see [Radio fetcher](radio-fetcher.md) |
+| `MEDIA_FETCHER_TOKEN_FILE` | overlay: `/jobs/.token` | Path to the shared fetcher token. Required for radio. The overlay copies the host file into the jobs volume; do not put the token in the process environment |
 | `MEDIA_UPSTREAM_PROXY` | unset | `http://host:port` (credentials allowed: `http://user:pass@host:port`) when the backend can reach the internet only through an outbound proxy. Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`. The checking proxy approves each destination first, then opens a `CONNECT` tunnel to that IP address (ports 80 and 443), not to the host name. An outbound proxy that only accepts host names, or refuses `CONNECT` to port 80, will refuse these requests. The backend must still be able to resolve public DNS names |
 | `TS_ALLOW_SELF_SIGNED` | `false` | Allow self-signed TeamSpeak WebQuery TLS certificates |
+| `LISTEN_HOST` | unset (Node default: all interfaces) | Optional HTTP bind address for the backend. Alias: `HOST` when `LISTEN_HOST` is unset. Leave unset in normal Docker images. Set `127.0.0.1` only for deliberately loopback-only local runs |
+
+### Discord Commands & Radio
+
+Advanced self-hosted Discord slash commands (not one-click onboarding). Off by default. Full setup: [Discord Commands & Radio](discord-commands.md). Distinct from the unreleased [Discord voice bridge](discord-bridge.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DISCORD_INTERACTIONS_ENABLED` | off (`false` / unset) | Runtime latch. When true, mounts `POST /api/discord/interactions` and requires a valid `DISCORD_PUBLIC_KEY`. Keep off until HTTPS, guild binding, and registration are ready |
+| `DISCORD_PUBLIC_KEY` | empty | Ed25519 **public** key hex from the Discord application (Interactions). Required when interactions are enabled. Not secret in the same sense as a bot token, but treat as configuration integrity |
+| `DISCORD_APPLICATION_ID` | empty | Discord application snowflake. Required for deferred interaction follow-up and for registration identity |
+| `DISCORD_INSTANCE_ID` | `local` | Must match `DiscordGuildBinding.instanceId` for this manager process. Prevents cross-instance bot fallback |
+| `DISCORD_VIEWER_ROLE_IDS` | empty (fail closed) | Comma-separated Discord role snowflakes allowed to run viewer commands. Empty → no viewers |
+| `DISCORD_ADMIN_ROLE_IDS` | empty (fail closed) | Comma-separated Discord role snowflakes allowed to run admin commands. Discord Administrator alone does not grant these |
+| `DISCORD_BOT_TOKEN` | empty | **Secret.** Bot token for the Applications Commands HTTP API (`slash-register-cli` `--fetch-remote` / `apply`). Not used to verify inbound interaction signatures. Inject only for one-shot operator CLI runs via `docker compose exec -e DISCORD_BOT_TOKEN` (forward an exported host var; never `-e DISCORD_BOT_TOKEN=value`). Do not put it in the long-running service environment |
+
+Operator-only CLIs (guild bind, registration preview) also need filesystem access to `DATABASE_URL` / audit paths; those flags are not separate env vars. See [Discord Commands & Radio](discord-commands.md#production-cli-reference).
+
+Related: `TRUST_PROXY` (table above) — required behind a reverse proxy so client IP / rate-limit keys are correct; see [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
 
 ### Video streaming defaults
 

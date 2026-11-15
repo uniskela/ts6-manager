@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MediaSessionConflictError, parseReplaceSessionIds, safeSourceLabel } from './media-session.js';
+import {
+  MediaSessionConflictError,
+  parseReplaceSessionIds,
+  publicMediaTitle,
+  safeSourceLabel,
+  safeUrlDisplayTitle,
+} from './media-session.js';
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
@@ -10,6 +16,15 @@ describe('media session helpers', () => {
     assert.equal(safeSourceLabel('/data/music/.stream-1700000000.mp4'), 'Downloaded video');
     assert.equal(safeSourceLabel('/data/music/intro.mp4'), 'intro.mp4');
     assert.equal(safeSourceLabel(null), null);
+  });
+
+  it('finding #9: safeUrlDisplayTitle and publicMediaTitle hide credentials and query tokens', () => {
+    const secretUrl = 'https://user:s3cret@media.example.test/stream.m3u8?token=abc123&sig=zzzz';
+    assert.equal(safeUrlDisplayTitle(secretUrl), 'Media from media.example.test');
+    assert.equal(publicMediaTitle(secretUrl), 'Media from media.example.test');
+    assert.equal(publicMediaTitle(secretUrl, secretUrl), 'Media from media.example.test');
+    assert.equal(publicMediaTitle('Nice Song', secretUrl), 'Nice Song');
+    assert.doesNotMatch(publicMediaTitle(secretUrl), /s3cret|abc123|user:/);
   });
 
   it('accepts only UUID session IDs, array or legacy single field', () => {

@@ -7,6 +7,16 @@ import type { Readable } from 'stream';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, buildSendTextCommands, isConnectionRefusal } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
+
+/**
+ * Hard cap on VoiceBot-queued PCM (~2s s16le stereo @ 48 kHz).
+ * Incoming chunks are split: only enough bytes to reach this mark are accepted;
+ * the remainder is unshifted onto stdout so ordering is preserved and nothing
+ * is discarded. stdout is paused at/above this mark.
+ */
+export const STREAM_PCM_HIGH_WATER_BYTES = BYTES_PER_FRAME * 100;
+/** ~0.5s of PCM. Resume stdout after drain reaches this. */
+export const STREAM_PCM_LOW_WATER_BYTES = BYTES_PER_FRAME * 25;
 import { createQueueChangeHook } from './queue-change-hook.js';
 import type { AutomationController } from './automation-controller.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
@@ -204,6 +214,19 @@ export class VoiceBot extends EventEmitter {
   private streamChunks: Buffer[] = [];
   private streamChunksSize: number = 0;
   private streamStartTime: number = 0;
+  /** Fetcher/ffmpeg ended; keep ticking until streamChunks drain (finite VOD-as-radio). */
+  private streamSourceEnded = false;
+  private streamFramesSent = 0;
+  private streamStdout: Readable | null = null;
+  private streamProcess: EventEmitter | null = null;
+  private streamPausedUpstream = false;
+  private streamNextDue = 0;
+  private streamStartEpoch = 0;
+  private streamFailedClose = false;
+  private streamItem: QueueItem | null = null;
+  private streamOnData: ((chunk: Buffer) => void) | null = null;
+  private streamOnClose: ((code: number | null) => void) | null = null;
+  private streamOnError: ((err: Error) => void) | null = null;
 
   // Nickname "now playing" state
   private _originalNickname: string;
@@ -905,13 +928,18 @@ export class VoiceBot extends EventEmitter {
     if (connectionIntent === this.connectionIntent) await this.start();
   }
 
-  /** Returns sessions actually replaced (this bot's video) when starting music. */
-  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    if (item.streamUrl) return this.playStream(item, options);
+  /**
+   * Shared music/radio start gate. `current` is null when a newer owner won
+   * after video replace (caller should return `replaced` unchanged).
+   */
+  private async prepareMusicStart(
+    item: QueueItem,
+    options: MusicStartOptions,
+  ): Promise<{ replaced: MediaSessionInfo[]; current: (() => boolean) | null }> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
-    if (options.automation && !options.automation()) return [];
+    if (options.automation && !options.automation()) return { replaced: [], current: null };
     if (!options.automation) this.automation?.requestQueued();
     const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
@@ -919,18 +947,25 @@ export class VoiceBot extends EventEmitter {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
       if (session) replaced.push(session);
     }
-    if (intent !== this.playbackOwner) return replaced;
+    if (intent !== this.playbackOwner) return { replaced, current: null };
     this.beginMusicSession();
-
     this.stopIcyPolling();
     this.stopPlayback();
     const owner = this.playbackOwner;
-    const current = () => owner === this.playbackOwner;
     this._nowPlaying = item;
     this._status = 'playing';
     this.emit('statusChange', this._status);
     this.emit('nowPlaying', item);
     this.updateNowPlayingNickname(item.title);
+    return { replaced, current: () => owner === this.playbackOwner };
+  }
+
+  /** Returns sessions actually replaced (this bot's video) when starting music. */
+  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
+    if (item.streamUrl) return this.playStream(item, options);
+    const prep = await this.prepareMusicStart(item, options);
+    if (!prep.current) return prep.replaced;
+    const { replaced, current } = prep;
 
     try {
       if (
@@ -1146,6 +1181,219 @@ export class VoiceBot extends EventEmitter {
     }
   };
 
+  private detachStreamListeners(): void {
+    if (this.streamStdout && this.streamOnData) {
+      this.streamStdout.off('data', this.streamOnData);
+    }
+    if (this.streamProcess) {
+      if (this.streamOnClose) this.streamProcess.off('close', this.streamOnClose);
+      if (this.streamOnError) this.streamProcess.off('error', this.streamOnError);
+      // Node throws on emit('error') with zero listeners. A cancelled fetcher
+      // socket can still error after stop/replace — absorb without retaining
+      // VoiceBot state (this.streamProcess is cleared below).
+      if (this.streamProcess.listenerCount('error') === 0) {
+        this.streamProcess.on('error', () => {});
+      }
+    }
+    this.streamOnData = null;
+    this.streamOnClose = null;
+    this.streamOnError = null;
+    this.streamProcess = null;
+  }
+
+  private pauseStreamUpstream(): void {
+    if (this.streamPausedUpstream || !this.streamStdout) return;
+    this.streamPausedUpstream = true;
+    try { this.streamStdout.pause(); } catch { /* ended */ }
+  }
+
+  private resumeStreamUpstream(): void {
+    // Still resume after EOF so unshifted remainder can enter the queue.
+    if (!this.streamPausedUpstream || !this.streamStdout) return;
+    if (this.streamChunksSize > STREAM_PCM_LOW_WATER_BYTES) return;
+    this.streamPausedUpstream = false;
+    try { this.streamStdout.resume(); } catch { /* ended */ }
+  }
+
+  /** Pull paused/unshifted stdout bytes into the queue without exceeding HWM. */
+  private flushPausedStreamStdout(): boolean {
+    const stdout = this.streamStdout;
+    if (!stdout) return false;
+    let got = false;
+    for (;;) {
+      const room = STREAM_PCM_HIGH_WATER_BYTES - this.streamChunksSize;
+      if (room <= 0) {
+        this.streamPausedUpstream = true;
+        return got;
+      }
+      let chunk: Buffer | null;
+      try {
+        chunk = stdout.read(room);
+      } catch {
+        break;
+      }
+      if (chunk == null) break;
+      if (!chunk.length) continue;
+      this.streamChunks.push(chunk);
+      this.streamChunksSize += chunk.length;
+      got = true;
+    }
+    this.streamPausedUpstream = false;
+    return got;
+  }
+
+  private applyStreamBackpressureAfterPush(): void {
+    if (this.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES) {
+      this.pauseStreamUpstream();
+    }
+  }
+
+  private releaseStreamBackpressureAfterTake(): void {
+    if (this.streamChunksSize <= STREAM_PCM_LOW_WATER_BYTES) {
+      this.resumeStreamUpstream();
+    }
+  }
+
+  /**
+   * Accept PCM into the VoiceBot queue without exceeding
+   * STREAM_PCM_HIGH_WATER_BYTES. Oversized/bursty chunks are split; unread
+   * bytes go back onto stdout via unshift (no discard, order preserved).
+   */
+  private acceptStreamPcm(chunk: Buffer): void {
+    if (!chunk.length) return;
+    const room = STREAM_PCM_HIGH_WATER_BYTES - this.streamChunksSize;
+    if (room <= 0) {
+      this.pauseStreamUpstream();
+      try { this.streamStdout?.unshift(chunk); } catch { /* ended */ }
+      return;
+    }
+    if (chunk.length <= room) {
+      this.streamChunks.push(chunk);
+      this.streamChunksSize += chunk.length;
+      this.applyStreamBackpressureAfterPush();
+      return;
+    }
+    const head = chunk.subarray(0, room);
+    const rest = chunk.subarray(room);
+    this.streamChunks.push(head);
+    this.streamChunksSize += head.length;
+    this.pauseStreamUpstream();
+    try { this.streamStdout?.unshift(rest); } catch { /* ended */ }
+  }
+
+  /** Tear down the active radio stream after an unexpected source failure. */
+  private failStreamSource(err: Error): void {
+    this.stopIcyPolling();
+    const kill = this.streamKill;
+    this.streamKill = null;
+    try { kill?.(); } catch { /* already dead */ }
+    this.clearTimer();
+    this.detachStreamListeners();
+    this._isStreaming = false;
+    this.streamStdout = null;
+    this.streamPausedUpstream = false;
+    this.streamSourceEnded = true;
+    this.streamChunks = [];
+    this.streamChunksSize = 0;
+    this.streamFramesSent = 0;
+    this.streamItem = null;
+    this.streamFailedClose = true;
+    if (!this._videoStreaming) this.stopAutoStopTimer();
+    try { this.client.sendVoiceStop(); } catch { /* ignore */ }
+    this.endMusicSession('source_unreachable', 'Stream source failed');
+    this._nowPlaying = null;
+    this.resetNickname();
+    this._status = 'error';
+    this.emit('error', err);
+    this.emit('statusChange', this._status);
+  }
+
+  private finishStreamTrack(item: QueueItem, failed: boolean): void {
+    if (this.streamFramesSent === 0 && this.recoverAutomatedFailure()) return;
+    this.client.sendVoiceStop();
+    this.clearTimer();
+    this.detachStreamListeners();
+    this._isStreaming = false;
+    this.streamKill = null;
+    this.streamStdout = null;
+    this.streamPausedUpstream = false;
+    this.streamSourceEnded = false;
+    this.streamChunks = [];
+    this.streamChunksSize = 0;
+    this.streamFramesSent = 0;
+    this.streamItem = null;
+
+    const finished = this._nowPlaying;
+    this._nowPlaying = null;
+    this._status = 'connected';
+    this.endMusicSession('source_ended', 'Stream ended');
+    this.emit('statusChange', this._status);
+    this.emit('trackEnd', finished ?? item);
+    this.automation?.sourceEnded({ failed });
+  }
+
+  private resumeStreamTick(): void {
+    this.streamNextDue = performance.now() + FRAME_MS;
+    this.playbackTimer = setTimeout(this.streamTick, FRAME_MS);
+  }
+
+  private takeStreamFrameOrPad(): Buffer | null {
+    const frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
+    if (frame || !this.streamSourceEnded || this.streamChunksSize === 0) return frame;
+    const raw = this.takeFromStreamChunks(this.streamChunksSize)!;
+    const padded = Buffer.alloc(BYTES_PER_FRAME, 0);
+    raw.copy(padded);
+    return padded;
+  }
+
+  /** false → tick should stop (track finished). */
+  private continueAfterStreamUnderrun(): boolean {
+    if (!this.streamSourceEnded) return true;
+    // Unshifted remainder may still sit on a paused stdout after EOF.
+    if (this.flushPausedStreamStdout() || this.streamChunksSize > 0) {
+      this.releaseStreamBackpressureAfterTake();
+      return true;
+    }
+    const item = this.streamItem ?? this._nowPlaying;
+    if (item) this.finishStreamTrack(item, this.streamFailedClose);
+    return false;
+  }
+
+  private streamTick = (): void => {
+    if (this.streamStartEpoch !== this.loopEpoch || !this._isStreaming) return;
+
+    const now = performance.now();
+    if (now < this.streamNextDue) {
+      this.playbackTimer = setTimeout(this.streamTick, Math.max(1, this.streamNextDue - now));
+      return;
+    }
+
+    if (now - this.streamNextDue >= FRAME_MS) {
+      this.streamNextDue = now + FRAME_MS;
+    }
+
+    const frame = this.takeStreamFrameOrPad();
+    if (frame) {
+      this.releaseStreamBackpressureAfterTake();
+      this.sendVoiceFrame(this.pipeline.encodeFrame(frame, this.config.volume));
+      this.streamFramesSent++;
+    } else if (!this.continueAfterStreamUnderrun()) {
+      return;
+    }
+
+    this.streamNextDue += FRAME_MS;
+    if (now - this.streamNextDue > 5 * FRAME_MS) {
+      this.streamNextDue = now + FRAME_MS;
+    }
+
+    const delay = this.streamNextDue - performance.now();
+    if (delay > 2) {
+      this.playbackTimer = setTimeout(this.streamTick, delay);
+    } else {
+      setImmediate(this.streamTick);
+    }
+  };
+
   private finishFileTrack(): void {
     if (this.fileFramesSent === 0 && this.recoverAutomatedFailure()) return;
     this.client.sendVoiceStop();
@@ -1219,34 +1467,16 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
-      throw new Error('Bot is not connected');
-    }
     if (!item.streamUrl) {
       throw new Error('No streamUrl provided');
     }
-    if (options.automation && !options.automation()) return [];
-    if (!options.automation) this.automation?.requestQueued();
-    const intent = this.playbackOwner = {};
-    const replaced: MediaSessionInfo[] = [];
-    if (this._videoStreaming || this._videoStarting) {
-      const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
-      if (session) replaced.push(session);
-    }
-    if (intent !== this.playbackOwner) return replaced;
-    this.beginMusicSession();
-
-    this.stopIcyPolling();
-    this.stopPlayback();
-    const owner = this.playbackOwner;
-    const current = () => owner === this.playbackOwner;
-    this._nowPlaying = item;
+    const prep = await this.prepareMusicStart(item, options);
+    if (!prep.current) return prep.replaced;
+    const { replaced, current } = prep;
     this._isStreaming = true;
-    this._status = 'playing';
     this.streamStartTime = Date.now();
-    this.emit('statusChange', this._status);
-    this.emit('nowPlaying', item);
-    this.updateNowPlayingNickname(item.title);
+    this.streamSourceEnded = false;
+    this.streamFramesSent = 0;
     this.startIcyPolling(item.streamUrl);
 
     try {
@@ -1258,89 +1488,59 @@ export class VoiceBot extends EventEmitter {
       this.streamKill = stream.kill;
       this.streamChunks = [];
       this.streamChunksSize = 0;
+      this.streamStdout = stream.stdout;
+      this.streamProcess = stream.process;
+      this.streamPausedUpstream = false;
+      this.streamItem = item;
+      this.streamFailedClose = false;
 
       const epoch = ++this.loopEpoch;
-      let framesSent = 0;
-      const startTime = performance.now();
+      this.streamStartEpoch = epoch;
 
-      stream.stdout.on('data', (chunk: Buffer) => {
+      this.streamOnData = (chunk: Buffer) => {
+        // Capture bind-time epoch — live streamStartEpoch tracks the newest play.
         if (epoch !== this.loopEpoch) return;
-        this.streamChunks.push(chunk);
-        this.streamChunksSize += chunk.length;
-      });
+        this.acceptStreamPcm(chunk);
+      };
 
-      stream.process.on('close', (code) => {
+      // Finite VOD used as "radio" can finish wall-clock decode quickly while
+      // PCM is still queued. Drain after EOF; hard-cap the queue at high-water
+      // (partial accept + unshift) so backpressure reaches the fetcher socket.
+      this.streamOnClose = (code) => {
         if (epoch !== this.loopEpoch) return;
         this.stopIcyPolling();
-        this.stopPlayback();
-        this.client.sendVoiceStop();
-        this._isStreaming = false;
+        this.streamFailedClose = code != null && code !== 0;
+        this.streamSourceEnded = true;
         this.streamKill = null;
-        this._nowPlaying = null;
-        this._status = 'connected';
-        this.endMusicSession('source_ended', 'Stream ended');
-        this.emit('statusChange', this._status);
-        this.emit('trackEnd', item);
-        this.automation?.sourceEnded({ failed: code != null && code !== 0 });
-      });
+        // Keep draining unshifted/paused stdout; do not drop the pause flag blindly.
+        if (this.streamStdout?.isPaused()) {
+          this.streamPausedUpstream = true;
+          this.releaseStreamBackpressureAfterTake();
+        } else {
+          this.streamPausedUpstream = false;
+        }
+        if (this.streamChunksSize === 0) {
+          if (this.flushPausedStreamStdout()) return;
+          this.finishStreamTrack(item, this.streamFailedClose);
+        }
+      };
 
-      stream.process.on('error', (err) => {
+      this.streamOnError = (err: Error) => {
+        // Bind-time epoch: a replaced stream's handler must not touch the newer play.
         if (epoch !== this.loopEpoch) return;
         if (this.recoverAutomatedFailure()) {
           this.emit('error', err);
           return;
         }
-        this._isStreaming = false;
-        this.streamKill = null;
-        this._status = 'error';
-        this.emit('error', err);
-        this.emit('statusChange', this._status);
-      });
-
-      let nextDue = performance.now() + 200; // initial buffer delay
-
-      const tick = () => {
-        if (epoch !== this.loopEpoch) return;
-
-        const now = performance.now();
-
-        // If we're early, wait until the next due time
-        if (now < nextDue) {
-          this.playbackTimer = setTimeout(tick, Math.max(1, nextDue - now));
-          return;
-        }
-
-        // If we're behind, resync clock (no bursts)
-        const lagMs = now - nextDue;
-        if (lagMs >= FRAME_MS) {
-          nextDue = now + FRAME_MS;
-        }
-
-        // Send exactly one frame if available
-        const frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
-        if (frame) {
-          const opusFrame = this.pipeline.encodeFrame(frame, this.config.volume);
-          this.sendVoiceFrame(opusFrame);
-        }
-
-        // Next slot
-        nextDue += FRAME_MS;
-
-        // If we fell way behind, resync to avoid long "catch-up"
-        if (now - nextDue > 5 * FRAME_MS) {
-          nextDue = now + FRAME_MS;
-        }
-
-        const delay = nextDue - performance.now();
-
-        if (delay > 2) {
-          this.playbackTimer = setTimeout(tick, delay);
-        } else {
-          setImmediate(tick);
-        }
+        this.failStreamSource(err);
       };
 
-      this.playbackTimer = setTimeout(tick, 200);
+      stream.stdout.on('data', this.streamOnData);
+      stream.process.on('close', this.streamOnClose);
+      stream.process.on('error', this.streamOnError);
+
+      this.streamNextDue = performance.now() + 200;
+      this.playbackTimer = setTimeout(this.streamTick, 200);
       this.startAutoStopTimer();
     } catch (err) {
       // A failed start must not leave ICY polling running for a dead stream.
@@ -1407,6 +1607,14 @@ export class VoiceBot extends EventEmitter {
         this.playbackTimer = null;
       }
       this.fileStdout?.pause();
+    } else if (this._isStreaming) {
+      // Same as file: keep epoch + buffered PCM; pause stdout so backpressure
+      // reaches the fetcher (do not re-open on resume).
+      if (this.playbackTimer) {
+        clearTimeout(this.playbackTimer);
+        this.playbackTimer = null;
+      }
+      try { this.streamStdout?.pause(); } catch { /* ended */ }
     } else {
       this.clearTimer();
     }
@@ -1424,13 +1632,15 @@ export class VoiceBot extends EventEmitter {
       this.fileStdout?.resume();
       this.resumeFileStreamTick();
     } else if (this._isStreaming && this._nowPlaying) {
-      // Direct/live streams do not have a local seekable file. Re-open the
-      // stream rather than accidentally running the removed PCM-frame loop.
-      const item = this._nowPlaying;
       this._status = 'playing';
       this.emit('statusChange', this._status);
-      this.playStream(item, this.automation?.active ? { automation: () => this.automation?.active ?? false } : {})
-        .catch((err) => this.emit('error', err));
+      // Resume only if under high-water (or source ended); otherwise keep paused
+      // until the tick drains to the low-water mark.
+      if (!this.streamSourceEnded && this.streamChunksSize < STREAM_PCM_HIGH_WATER_BYTES) {
+        this.streamPausedUpstream = false;
+        try { this.streamStdout?.resume(); } catch { /* ended */ }
+      }
+      this.resumeStreamTick();
     }
   }
 
@@ -1737,9 +1947,16 @@ export class VoiceBot extends EventEmitter {
       this.streamKill();
       this.streamKill = null;
     }
+    this.detachStreamListeners();
     this._isStreaming = false;
+    this.streamStdout = null;
+    this.streamPausedUpstream = false;
+    this.streamSourceEnded = false;
+    this.streamFramesSent = 0;
     this.streamChunks = [];
     this.streamChunksSize = 0;
+    this.streamItem = null;
+    this.streamFailedClose = false;
   }
 
   // ─── Video Streaming ────────────────────────────────────────

@@ -42,6 +42,7 @@ function fixture(rows = [row(1)], status = 'connected', policy: object | null = 
     getCurrentChannelId: () => 5, assertMusicCanStart: () => {},
     play: async (item: any) => { bot.nowPlaying = item; played.push(item); },
     playStream: async (item: any) => { bot.nowPlaying = item; played.push(item); },
+    stopAudio: () => { bot.nowPlaying = null; },
   };
   const manager: any = { getBot: () => bot };
   const handler: any = new MusicCommandHandler(prisma, manager);
@@ -106,6 +107,7 @@ test('again validates private URLs and missing files and marks requests unavaila
   assert.deepEqual(f.marked, [1, 2]);
   assert.deepEqual(f.enqueued, []);
   assert.equal(f.bot.queue.length, 0);
+  assert.equal(f.replies.length, 2);
   assert.ok(f.replies.every(message => message === 'This media is no longer available.'));
 });
 
@@ -118,6 +120,29 @@ test('again marks definite removed-source failures without mislabeling connectio
     assert.deepEqual(f.marked, unavailable ? [1] : []);
     assert.equal(f.replies[0], unavailable ? 'This media is no longer available.' : `Error: ${message}`);
   }
+});
+
+test('!radio plays the exact station item and queries stations for the bot server only', async () => {
+  const f = fixture();
+  const queries: any[] = [];
+  f.prisma.radioStation = { findMany: async (args: any) => {
+    queries.push(args);
+    return [
+      { id: 3, name: 'Station', genre: 'Jazz', url: 'https://8.8.8.8/radio' },
+      { id: 4, name: 'No genre', genre: null, url: 'http://8.8.4.4:8000/live' },
+    ];
+  } };
+  await f.command('!radio 3');
+  await f.command('!radio 4');
+  assert.deepEqual(queries.map((q) => q), [
+    { where: { serverConfigId: 9 }, orderBy: { name: 'asc' } },
+    { where: { serverConfigId: 9 }, orderBy: { name: 'asc' } },
+  ]);
+  assert.deepEqual(f.played, [
+    { id: 'radio_3', title: 'Station', artist: 'Jazz', filePath: '', source: 'radio', streamUrl: 'https://8.8.8.8/radio' },
+    { id: 'radio_4', title: 'No genre', artist: 'Radio', filePath: '', source: 'radio', streamUrl: 'http://8.8.4.4:8000/live' },
+  ]);
+  assert.deepEqual(f.replies, ['Now playing: Station', 'Now playing: No genre']);
 });
 
 test('radio and saved playlist commands record accepted canonical items with metadata', async () => {
@@ -204,15 +229,19 @@ test('unavailable replies are discarded when the bot changes during the history 
     await new Promise(done => setImmediate(done));
     assert.ok(release);
     if (change === 'stop') {
-      f.bot.stopAudio = () => {};
       await f.command('!stop');
     } else if (change === 'replace') f.manager.getBot = () => ({ ...f.bot });
     else if (change === 'server') f.bot.currentConfig.serverConfigId = 10;
     else f.handler.botChannelConfig.get(1).virtualServerId = 3;
-    const replies = [...f.replies];
+    const repliesBefore = [...f.replies];
     release();
     await replay;
-    assert.deepEqual(f.replies, replies, change);
+    if (change === 'stop') {
+      // Stop keeps the same bot identity; the unavailable reply still applies.
+      assert.equal(f.replies.at(-1), 'This media is no longer available.', change);
+    } else {
+      assert.deepEqual(f.replies, repliesBefore, change);
+    }
   }
 });
 

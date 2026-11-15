@@ -11,6 +11,7 @@ on:
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
+      - 'services/media-fetcher/**'
       - 'docker-commands/**'
       - 'scripts/ci/**'
       - 'package.json'
@@ -33,6 +34,7 @@ on:
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
+      - 'services/media-fetcher/**'
       - 'docker-commands/**'
       - 'scripts/ci/**'
       - 'package.json'
@@ -76,12 +78,21 @@ jobs:
         include:
           - component: backend
             dockerfile: Dockerfile.backend
+            context: .
           - component: frontend
             dockerfile: Dockerfile.frontend
+            context: .
           - component: sidecar
             dockerfile: Dockerfile.sidecar
+            context: .
+          # Isolated radio egress helper (Landlock ABI >= 4). Build context is
+          # services/media-fetcher (same as publish-images.yml / compose).
+          - component: media-fetcher
+            dockerfile: services/media-fetcher/Dockerfile
+            context: services/media-fetcher
           - component: all-in-one
             dockerfile: Dockerfile.all-in-one
+            context: .
 
     steps:
       - name: Checkout
@@ -99,7 +110,7 @@ jobs:
       - name: Build final image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           load: true
           push: false
@@ -182,6 +193,84 @@ jobs:
               /usr/local/bin/apply-schema.sh
               test -s /tmp/runtime-smoke.db
             '
+
+      # Non-networked smoke only: binaries, Landlock wrapper, entrypoints, and
+      # static ESM graph. Do not start the proxy/fetcher against remote media.
+      - name: Validate media-fetcher runtime
+        if: matrix.component == 'media-fetcher'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ts6-security-media-fetcher:${{ env.SCAN_SHA }}"
+          docker run --rm --entrypoint sh "$IMAGE" -ec "
+            set -eu
+            # Standalone (no pipe): missing shared libs must fail this step.
+            ffmpeg -hide_banner -version >/dev/null
+            test -x /usr/local/bin/ll-wrap
+            command -v node >/dev/null
+            # npm/Corepack are not part of the production runtime (F-1).
+            if command -v npm >/dev/null 2>&1 || command -v npx >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1; then
+              echo 'npm/npx/corepack must not be present in the media-fetcher image' >&2
+              exit 1
+            fi
+            test ! -e /usr/local/lib/node_modules/npm
+            test ! -e /usr/local/lib/node_modules/corepack
+            for f in \
+              /app/fetcher.mjs \
+              /app/proxy.mjs \
+              /app/policy.mjs \
+              /app/landlock.mjs \
+              /app/response-headers.mjs \
+              /app/ffmpeg-args.mjs \
+              /app/token.mjs \
+              /app/pending-job.mjs \
+              /app/peer-pid.mjs \
+              /app/socket-guards.mjs \
+              /app/install-token.mjs \
+              /app/reserved-networks.json
+            do
+              test -f \"\$f\"
+            done
+            # Syntax-check entrypoints. Do not import them: proxy.mjs exits without
+            # a ctl token and both would bind sockets on full evaluation (F-3 limit).
+            node --check /app/fetcher.mjs
+            node --check /app/proxy.mjs
+            for f in /app/policy.mjs /app/landlock.mjs /app/response-headers.mjs \
+              /app/ffmpeg-args.mjs /app/token.mjs /app/pending-job.mjs \
+              /app/peer-pid.mjs /app/socket-guards.mjs /app/install-token.mjs
+            do
+              node --check \"\$f\"
+            done
+            # Load dependency modules + assert named exports used by entrypoints.
+            node --input-type=module -e '
+              const pol = await import(\"/app/policy.mjs\");
+              const ll = await import(\"/app/landlock.mjs\");
+              const rh = await import(\"/app/response-headers.mjs\");
+              const ff = await import(\"/app/ffmpeg-args.mjs\");
+              const tok = await import(\"/app/token.mjs\");
+              const pend = await import(\"/app/pending-job.mjs\");
+              const peer = await import(\"/app/peer-pid.mjs\");
+              const sock = await import(\"/app/socket-guards.mjs\");
+              for (const [mod, names] of [
+                [pol, [\"allocateJobId\", \"allowTlsConnect\", \"constrainRadioPorts\", \"parseJobId\", \"parseConnectAuthority\", \"pinMediaAddresses\"]],
+                [ll, [\"landlockDisabledByEnv\", \"parseCheckOutput\"]],
+                [rh, [\"buildClientResponseHeaders\"]],
+                [ff, [\"radioFfmpegArgs\"]],
+                [tok, [\"assertPrivateTokenMode\", \"tokensEqual\"]],
+                [pend, [\"abandonPending\", \"clearUnregisteredJobId\", \"continueIfClientAlive\", \"createPendingJob\", \"noteProxyRegistered\"]],
+                [peer, [\"peerPid\"]],
+                [sock, [\"attachClientSocketLifecycle\"]],
+              ]) {
+                for (const name of names) {
+                  if (typeof mod[name] !== \"function\") {
+                    throw new Error(\"missing export \" + name);
+                  }
+                }
+              }
+              console.log(\"media-fetcher dependency ESM graph ok\");
+            '
+            echo 'Validated media-fetcher runtime layout'
+          "
 
       # trivy-action v0.36.0 defaults to Trivy v0.70.0. Pin the current
       # scanner binary separately while keeping the action commit SHA pinned.

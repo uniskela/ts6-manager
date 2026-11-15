@@ -12,6 +12,7 @@ function fakePrisma() {
     ] as Array<Record<string, unknown>>,
     entryDeletes: [] as unknown[],
     botDeletes: [] as unknown[],
+    bindingDeletes: [] as unknown[],
     failTransactions: false,
   };
   const prisma = {
@@ -19,6 +20,9 @@ function fakePrisma() {
       findUnique: async () => null,
       upsert: async () => {},
       deleteMany: async () => {},
+    },
+    discordGuildBinding: {
+      deleteMany: async (args: unknown) => { state.bindingDeletes.push(args); return { count: 0 }; },
     },
     musicBot: {
       findMany: async () => [{
@@ -146,5 +150,6 @@ describe('voice bot manager: video queue', () => {
     assert.deepEqual(state.entryDeletes.at(-1), { where: { musicBotId: 1 } });
     assert.equal(manager.getVideoQueue(1), undefined);
     assert.equal(state.botDeletes.length, 1);
+    assert.deepEqual(state.bindingDeletes, [{ where: { musicBotId: 1 } }]);
   });
 });

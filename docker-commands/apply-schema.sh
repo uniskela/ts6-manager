@@ -53,11 +53,62 @@ if [ ! -f "$PRISMA_CLI" ]; then
   exit 1
 fi
 
+# Prisma and the nameKey CLI use DATABASE_URL (not DB_FILE) as the database.
+# Default DATABASE_URL to DB_FILE only when unset so both stay aligned for stock
+# installs; a custom DATABASE_URL is always what preflight and db push open.
+if [ -z "${DATABASE_URL:-}" ]; then
+  export DATABASE_URL="file:$DB_FILE"
+fi
+# Hint for preflight mismatch detection when DATABASE_URL ≠ DB_FILE.
+export TS6_SCHEMA_DB_FILE="$DB_FILE"
+
+NAMEKEY_CLI=""
+if [ -f "$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/dist/voice/commands/playlist-namekey-finalize-cli.js"
+elif [ -f "$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts" ]; then
+  NAMEKEY_CLI="$BACKEND_DIR/src/voice/commands/playlist-namekey-finalize-cli.ts"
+fi
+if [ -z "$NAMEKEY_CLI" ]; then
+  echo "[schema] playlist-namekey-finalize-cli missing" >&2
+  exit 1
+fi
+
+run_namekey_cli() {
+  if [ "${NAMEKEY_CLI%.ts}" != "$NAMEKEY_CLI" ]; then
+    node --import tsx "$NAMEKEY_CLI" "$@"
+  else
+    node "$NAMEKEY_CLI" "$@"
+  fi
+}
+
+# F1: always preflight the DATABASE_URL target BEFORE prisma db push.
+# --allow-absent is startup-only: a missing file is a genuine fresh install.
+# Manual operator checks omit that flag and must not report a false PASS.
+# Existing incompatible playlists → refuse; schema and rows stay unchanged.
+# DB_FILE existence must not gate this — DATABASE_URL can point elsewhere.
+# MODE is derived from DB_FILE / schema-version markers for logging only;
+# Prisma open/push always use DATABASE_URL.
+echo "[schema] Preflight: playlist nameKey compatibility (read-only, before db push)"
+if ! run_namekey_cli --preflight --allow-absent; then
+  echo "[schema] Playlist name compatibility preflight failed — database left unchanged." >&2
+  echo "[schema] Resolve duplicate/blank playlist names on a copy, or restore backup and stay on the previous image." >&2
+  exit 1
+fi
+
 echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
 # The Prisma CLI's update check forks a detached node process. If the check hangs
 # (for example when outbound traffic is filtered) it outlives this script and,
 # after `exec node dist/index.js`, ends as a zombie under the backend (#466).
 CHECKPOINT_DISABLE=1 node "$PRISMA_CLI" db push --skip-generate
+
+# Playlist nameKey uniqueness is not expressible as Prisma @@unique (partial
+# indexes + cross-namespace triggers). db push only adds the column/index.
+# Finalise after push: JS backfill → conflict preflight → constraints.
+# Conflicts refuse finalisation without renaming/deleting playlists; schema
+# version is not recorded so the next start retries after the operator fixes
+# duplicates (restore backup if needed).
+echo "[schema] Finalising playlist nameKey uniqueness"
+run_namekey_cli --confirm-finalize
 
 # Seed is safe to re-run (script uses upsert / ignores existing values).
 if node prisma/seed.mjs; then

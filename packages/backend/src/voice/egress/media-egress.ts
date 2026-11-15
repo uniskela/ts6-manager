@@ -3,9 +3,9 @@ import { MediaEgressProxy, type EgressJob, type UpstreamProxy } from './media-eg
 /**
  * Process-wide media egress settings and the shared checking proxy.
  *
- * MEDIA_EGRESS_PROXY=off is an emergency administrator setting: downloads then
- * connect directly, and only YouTube links and searches are accepted, so
- * untrusted users do not keep arbitrary media links while protection is off.
+ * MEDIA_EGRESS_PROXY=off is an emergency administrator setting: only YouTube
+ * links and searches then connect directly. Radio, ICY metadata and other
+ * non-YouTube URLs fail closed — they never fall back to a direct connection.
  * MEDIA_UPSTREAM_PROXY chains approved connections through an outbound proxy.
  */
 
@@ -113,6 +113,7 @@ export async function startMediaEgress(log: Pick<Console, 'log' | 'warn'> = cons
     log.warn('[MediaEgress] DISABLED by MEDIA_EGRESS_PROXY=off. Media downloads connect directly and are not checked at connection time; only YouTube links and searches are accepted until it is switched back on.');
     return;
   }
+  log.log('[MediaEgress] radio requires the isolated media fetcher; downloads still use the in-process proxy');
   const ignored = ignoredProxyVariables();
   if (ignored.length > 0 && !process.env.MEDIA_UPSTREAM_PROXY) {
     log.warn(`[MediaEgress] ${ignored.join(', ')} is set but media downloads no longer use it. Set MEDIA_UPSTREAM_PROXY if downloads must go through an outbound proxy.`);
@@ -145,7 +146,11 @@ function isYouTubeTarget(target: string): boolean {
  * MediaEgressError when the proxy cannot be used, so a job never falls back
  * to a direct connection.
  */
-export async function acquireMediaEgress(target: string, ttlMs: number): Promise<EgressJob | null> {
+export async function acquireMediaEgress(
+  target: string,
+  ttlMs: number,
+  opts?: { ports?: ReadonlySet<number> },
+): Promise<EgressJob | null> {
   if (!mediaEgressEnabled()) {
     if (Date.now() - lastOffWarning > 60_000) {
       lastOffWarning = Date.now();
@@ -155,7 +160,7 @@ export async function acquireMediaEgress(target: string, ttlMs: number): Promise
     return null;
   }
   try {
-    return await sharedProxy().issue(ttlMs);
+    return await sharedProxy().issue(ttlMs, opts);
   } catch (err) {
     if (err instanceof MediaEgressError) throw err;
     throw new MediaEgressError();

@@ -1,0 +1,233 @@
+# Standalone INT-TEST media fetcher (Commands & Radio supervised live).
+# Does NOT modify production media-fetcher services or docker-compose.media-fetcher.yml.
+#
+# Compose project (required): ts6-discord-int-media
+#   Distinct from production, disposable INT TS (ts6-discord-int), and D1 lab.
+#   Always: docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml …
+#   Scripts source scripts/discord-int-media-fetcher-compose.sh (same -p).
+#   Do not rely on the repository directory's default Compose project name.
+#
+# Rootless Docker remaps container UIDs (host orca → subuid). Bind-mounting jobs.sock
+# / .token mode 600 between host backend (uid 999) and fetcher (uid 1000→197608) yields
+# EACCES both ways. Match production: share an isolated *named* jobs volume between an
+# INT-only backend container and the fetcher. Host never needs to open the socket.
+#
+# Rootless Docker Engine 29.x: network_mode: host shares the real host loopback (pasta).
+# Bridge + host.docker.internal cannot reach host 127.0.0.1-only publishes (TS/WebQuery),
+# so INT backend/sidecar use host networking and keep LISTEN_HOST=127.0.0.1.
+#
+# Seed token (compose install input) vs installed token (backend reads inside /jobs):
+#   MEDIA_FETCHER_SEED_TOKEN_FILE  → host seed copied into /jobs/.token (umask 077, gitignored)
+#   MEDIA_FETCHER_TOKEN_FILE       → inside containers: /jobs/.token (do not point host env at seed)
+#
+# Interactions (fail-closed):
+#   Default OFF via TS6_DISCORD_INT_INTERACTIONS / TS6_DISCORD_INT_LIVE (not ambient
+#   DISCORD_INTERACTIONS_ENABLED from the shell — avoids production/env bleed).
+#   Supervised window also needs matching DISCORD_* identity in .env.discord-integration-test
+#   and the process isolation gate (TS6_ISOLATED_LIVE_INTERACTIONS + app id + public key).
+#
+# Prerequisites: Linux 6.7+ Landlock ABI, rootless Docker OK.
+#   umask 077; openssl rand -hex 32 > .media-fetcher-token-int
+#   # SIDECAR_SECRET must be set in .env.discord-integration-test for --profile int-backend
+#
+# Fetcher + proxy only (IPC check / prep):
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml up --build -d
+#   ./scripts/discord-int-media-fetcher-ipc-check.sh
+#
+# INT backend + sidecar (profile int-backend) — builds from this tree:
+#   DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
+#   DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
+# Offline stack check:
+#   ./scripts/discord-int-media-fetcher-stack-check.sh
+#
+# Tear down (this project only; no -v; does not stop ts6-discord-int TS):
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
+# Do not point production stacks at these volumes.
+
+name: ts6-discord-int-media
+
+services:
+  media-fetcher-token:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+    environment:
+      - TOKEN_SRC=/src/token
+      - TOKEN_DEST=/jobs/.token
+      - CTL_TOKEN_DEST=/ctl/.ctl-token
+    volumes:
+      # Seed only — never the backend's installed MEDIA_FETCHER_TOKEN_FILE path.
+      - ${MEDIA_FETCHER_SEED_TOKEN_FILE:-./.media-fetcher-token-int}:/src/token:ro
+      - discord-int-jobs:/jobs
+      - discord-int-ctl:/ctl
+    command: ["node", "/app/install-token.mjs"]
+    restart: "no"
+    networks:
+      discord_int_fetch:
+
+  media-egress-proxy:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    container_name: ts6-discord-int-media-egress-proxy
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
+      - PROXY_PORT=8080
+    volumes:
+      - discord-int-ctl:/ctl
+    command: ["node", "/app/proxy.mjs"]
+    depends_on:
+      media-fetcher-token:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      discord_int_fetch:
+      discord_int_egress:
+
+  media-fetcher:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    container_name: ts6-discord-int-media-fetcher
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - JOBS_SOCK=/jobs/jobs.sock
+      - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
+      - PROXY_HOST=media-egress-proxy
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
+      - FETCHER_MAX_JOBS=4
+    volumes:
+      - discord-int-jobs:/jobs
+      - discord-int-ctl:/ctl
+    command: ["node", "/app/fetcher.mjs"]
+    depends_on:
+      media-fetcher-token:
+        condition: service_completed_successfully
+      media-egress-proxy:
+        condition: service_started
+    restart: "no"
+    networks:
+      discord_int_fetch:
+
+  # Offline IPC probe (same userns/volume view as INT backend). Not published.
+  media-fetcher-ipc-check:
+    profiles: ["ipc-check"]
+    image: ts6-media-fetcher:local
+    user: "1000:1000"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - MEDIA_FETCHER_SOCK=/jobs/jobs.sock
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
+    volumes:
+      - discord-int-jobs:/jobs
+      - ./services/media-fetcher/ipc-check.mjs:/app/ipc-check.mjs:ro
+    command: ["node", "/app/ipc-check.mjs"]
+    depends_on:
+      media-fetcher:
+        condition: service_started
+    restart: "no"
+    networks:
+      discord_int_fetch:
+
+  # Optional INT backend built from this tree (not GHCR latest). Host network keeps
+  # LISTEN_HOST=127.0.0.1 valid and reaches disposable TS/WebQuery on host loopback.
+  sidecar:
+    profiles: ["int-backend"]
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    image: ts6-discord-int-sidecar:local
+    container_name: ts6-discord-int-sidecar
+    network_mode: host
+    env_file:
+      - .env.discord-integration-test
+    environment:
+      - SIDECAR_PORT=9800
+      - SIDECAR_HOST=127.0.0.1
+      - MUSIC_DIR=/data/music
+      # SIDECAR_SECRET comes from env_file only — do not interpolate ${SIDECAR_SECRET:-}
+      # here (that blanks a file value when the host shell unset the var).
+    volumes:
+      - ${DISCORD_INT_MUSIC_DIR:-./packages/backend/data/discord-int-music}:/data/music
+    restart: "no"
+
+  backend:
+    profiles: ["int-backend"]
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: ts6-discord-int-backend:local
+    container_name: ts6-discord-int-backend
+    network_mode: host
+    env_file:
+      - .env.discord-integration-test
+    environment:
+      - LISTEN_HOST=127.0.0.1
+      - PORT=3011
+      - MEDIA_FETCHER=1
+      - MEDIA_FETCHER_SOCK=/jobs/jobs.sock
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
+      - DATABASE_URL=file:/data/discord-int/discord-int-test.db
+      - DATA_DIR=/data/discord-int
+      - DB_FILE=/data/discord-int/discord-int-test.db
+      - MUSIC_DIR=/data/music
+      - SIDECAR_URL=http://127.0.0.1:9800
+      - TS6_ISOLATED_INTEGRATION=1
+      # Dedicated activation knobs (default OFF). Not DISCORD_INTERACTIONS_ENABLED from the shell.
+      - DISCORD_INTERACTIONS_ENABLED=${TS6_DISCORD_INT_INTERACTIONS:-false}
+      - TS6_ISOLATED_LIVE_INTERACTIONS=${TS6_DISCORD_INT_LIVE:-false}
+    volumes:
+      - discord-int-jobs:/jobs
+      - ${DISCORD_INT_DB_DIR:-./packages/backend/prisma/data}:/data/discord-int
+      - ${DISCORD_INT_MUSIC_DIR:-./packages/backend/data/discord-int-music}:/data/music
+    depends_on:
+      sidecar:
+        condition: service_started
+      media-fetcher-token:
+        condition: service_completed_successfully
+      media-fetcher:
+        condition: service_started
+    restart: "no"
+
+volumes:
+  discord-int-jobs:
+  discord-int-ctl:
+
+networks:
+  discord_int_fetch:
+    internal: true
+  discord_int_egress:

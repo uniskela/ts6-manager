@@ -65,3 +65,25 @@ export function safeSourceLabel(source: string | null | undefined): string | nul
   const base = trimmed.split(/[\\/]/).pop() ?? '';
   return base.startsWith('.stream-') ? 'Downloaded video' : base || null;
 }
+
+/** Neutral playlist/queue title for an external media URL (keeps sourceUrl elsewhere). */
+export function safeUrlDisplayTitle(url: string): string {
+  const host = safeSourceLabel(url);
+  return host ? `Media from ${host}` : 'External media';
+}
+
+/**
+ * Title safe for Discord/TeamSpeak replies and listings.
+ * Replaces URL-as-title (and userinfo-bearing strings) without touching sourceUrl.
+ */
+export function publicMediaTitle(
+  title: string | null | undefined,
+  sourceUrl?: string | null,
+): string {
+  const raw = (title ?? '').trim();
+  const looksLikeUrl = /^https?:\/\//i.test(raw) || /:\/\/[^\s]*@/i.test(raw);
+  if (!raw || looksLikeUrl || (sourceUrl != null && raw === sourceUrl)) {
+    return safeUrlDisplayTitle(sourceUrl || raw || '');
+  }
+  return raw.slice(0, 120);
+}

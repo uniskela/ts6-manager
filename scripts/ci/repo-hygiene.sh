@@ -113,6 +113,11 @@ export GIT_SHA=accept-check
 # base file, so that is how they are validated.
 declare -A compose_bases=(
   [docker-compose.nvidia.yml]=docker-compose.yml
+  # Overlay only patches backend + adds fetcher services; validate layered.
+  [docker-compose.media-fetcher.yml]=docker-compose.yml
+  # Discord runtime env overlays; validate layered on the matching base.
+  [docker-compose.discord-commands.example.yml]=docker-compose.yml
+  [docker-compose.discord-commands.all-in-one.example.yml]=docker-compose.all-in-one.yml
 )
 
 for compose in "${compose_files[@]}"; do

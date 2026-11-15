@@ -11,11 +11,13 @@ function fixture(status = 'connected') {
   const playlists = [{ id: 3, name: 'Rock' }, { id: 4, name: 'Rock live' }];
   const prisma = { appSetting: { findUnique: async () => null }, playlist: {
     findMany: async ({ where }: any) => {
-      assert.deepEqual(where.OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[0].OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[1].OR, [{ musicBot: null }, { musicBot: { serverConfigId: 9 } }]);
       return playlists;
     },
     findFirst: async ({ where }: any) => {
-      assert.deepEqual(where.OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[0].OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[1].OR, [{ musicBot: null }, { musicBot: { serverConfigId: 9 } }]);
       return { name: 'Rock', songs: [{ song: { id: 7, title: 'Track', filePath: '', source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk' } }] };
     },
   } } as any;
@@ -26,14 +28,22 @@ function fixture(status = 'connected') {
   handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
   handler.saveMusicRequest = () => {};
   const bot = { currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42,
-    queue: new PlayQueue(), status, nowPlaying: null, canSeek: true,
+    queue: new PlayQueue(), status, nowPlaying: null as any, canSeek: true,
+    stopGeneration: 0,
     playbackProgress: { position: 60, duration: 100 },
-    play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
+    assertMusicCanStart() {},
+    play: async function (item: any) {
+      played.push(item);
+      this.nowPlaying = item;
+      if (this.status === 'connected') this.status = 'playing';
+    },
+    seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
     isStreaming: false,
     stopAudio() {
       if (this.status === 'playing' || this.status === 'paused') this.status = 'connected';
       this.isStreaming = false;
+      this.nowPlaying = null;
     },
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
@@ -125,6 +135,18 @@ test('idle playlist append resumes existing queue order instead of jumping past 
   assert.equal(f.played.length, 1);
   assert.equal(f.played[0].title, 'Already queued');
 });
+test('!pause still toggles TeamSpeak playback', async () => {
+  const f = fixture('playing');
+  f.bot.pause = function () { if (this.status === 'playing') this.status = 'paused'; };
+  f.bot.resume = function () { if (this.status === 'paused') this.status = 'playing'; };
+  await f.command('!pause');
+  assert.equal(f.bot.status, 'paused');
+  assert.match(f.replies.at(-1)!, /Paused/);
+  await f.command('!pause');
+  assert.equal(f.bot.status, 'playing');
+  assert.match(f.replies.at(-1)!, /Resumed/);
+});
+
 test('!vol shows the shared volume and applies a new level', async () => {
   const f = fixture();
   f.bot.currentConfig.volume = 40;

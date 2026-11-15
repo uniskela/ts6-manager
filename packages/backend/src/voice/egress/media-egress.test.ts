@@ -101,7 +101,7 @@ describe('media egress jobs', () => {
     assert.equal(await acquireMediaEgress('ytsearch1:artist title', 60_000), null);
     for (const target of [
       'https://soundcloud.com/a/b', 'http://www.youtube.com/watch?v=abcdefghijk', 'https://youtube.com.evil.test/x',
-      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url',
+      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url', 'https://radio.example/stream',
     ]) {
       await assert.rejects(acquireMediaEgress(target, 60_000), (err: Error) => err instanceof MediaEgressError && err.message === MEDIA_EGRESS_OFF_REFUSAL, target);
     }
@@ -122,7 +122,8 @@ describe('media egress jobs', () => {
       const logs: string[] = [];
       await startMediaEgress({ log: (m: string) => logs.push(m), warn: (m: string) => warnings.push(m) });
       assert.deepEqual(warnings, []);
-      assert.deepEqual(logs, ['[MediaEgress] enforcing (upstream: none)']);
+      assert.equal(logs[0], '[MediaEgress] radio requires the isolated media fetcher; downloads still use the in-process proxy');
+      assert.equal(logs.at(-1), '[MediaEgress] enforcing (upstream: none)');
     } finally {
       if (before.trust === undefined) delete process.env.TRUST_PROXY; else process.env.TRUST_PROXY = before.trust;
       if (before.https === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = before.https;
@@ -141,7 +142,8 @@ describe('media egress jobs', () => {
       await startMediaEgress({ log: (m: string) => logs.push(m), warn: (m: string) => warnings.push(m) });
       assert.match(warnings.join('\n'), /HTTPS_PROXY is set but media downloads no longer use it/);
       assert.ok(!warnings.join('\n').includes('secret'));
-      assert.deepEqual(logs, ['[MediaEgress] enforcing (upstream: none)']);
+      assert.equal(logs[0], '[MediaEgress] radio requires the isolated media fetcher; downloads still use the in-process proxy');
+      assert.equal(logs.at(-1), '[MediaEgress] enforcing (upstream: none)');
     } finally {
       if (before === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = before;
     }

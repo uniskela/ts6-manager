@@ -19,6 +19,23 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Radio isolated fetcher
+
+**Breaking change for radio playback.** Remote radio no longer starts ffmpeg inside the backend. Every radio entry point (TeamSpeak, Discord, web, Auto-DJ, listener requests, queue next/prev) uses the isolated media fetcher. If the fetcher is not running, radio fails with *Radio playback needs the isolated media fetcher. Saved stations are unchanged.* There is no silent fallback and no public `MEDIA_FETCHER=legacy` override.
+
+This is a documented security change. Treat the release that ships it as **major** (`feat!:`) because existing installs lose radio until the overlay is added. Station rows are not modified.
+
+**What to do**
+
+1. Keep the existing database volume. Station records stay as they are.
+2. Add the [Radio fetcher](radio-fetcher.md) overlay to the split stack (`docker-compose.yml` + `docker-compose.media-fetcher.yml`).
+3. Create `.media-fetcher-token` with `umask 077` (mode `600`, not `644`) and confirm the host has Linux 6.7+ with Landlock ABI ≥ 4. The overlay copies that file into the jobs volume; keep the host file owner-only.
+4. Play a saved station. Music and YouTube are unchanged.
+
+**All-in-one and native installs.** Radio fails closed until an equivalent fetcher is running. Do not expect the all-in-one image alone to play radio after this change.
+
+`MEDIA_EGRESS_PROXY=off` is still not a way to play radio.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.
@@ -99,12 +116,12 @@ Cloud metadata addresses stay blocked even when listed.
 **Breaking change for some setups** (an outbound proxy set through `HTTP_PROXY`/`HTTPS_PROXY`, or media on your local network). Every media download (yt-dlp for music and video, and ffmpeg playing a track URL yt-dlp resolved) now connects through a checking proxy inside the backend; see [Security — Media downloads](security.md#media-downloads). There is no schema change and no Compose change. Most links work as before. These changes may affect you:
 
 - **Outbound proxy settings.** Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` from the backend's environment. If the backend can only reach the internet through an outbound proxy, set `MEDIA_UPSTREAM_PROXY=http://host:port`. The backend logs a startup warning when one of the old variables is set and `MEDIA_UPSTREAM_PROXY` is not. The outbound proxy is asked for `CONNECT` tunnels to IP addresses on ports 80 and 443, not host names. A proxy that only allows named domains, or refuses `CONNECT` to port 80, will refuse these requests, and the backend must be able to resolve public DNS names itself.
-- **Links to your local network.** Pasted links, `!play` links and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance; radio is unchanged.
-- **Ports other than 80 and 443.** Media hosted on another port, such as `https://media.example.com:8443/track.mp3`, is refused.
+- **Links to your local network.** Pasted links, `!play` links, radio streams and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance.
+- **Ports other than 80 and 443.** Downloaded tracks hosted on another port, such as `https://media.example.com:8443/track.mp3`, are refused. Radio streams may use 8000, 8008, 8080 or 8443 in addition to 80 and 443.
 - **Formats that are not HTTP.** Sources that offer only RTMP, RTSP, MMS or similar streams are refused. HTTP(S), HLS and DASH work. The few HTTPS streams that yt-dlp can only download by handing them to ffmpeg are refused too.
 - **yt-dlp configuration files.** Media downloads ignore yt-dlp configuration files and plugin folders on the host. On a native install, options you set in a yt-dlp config file no longer apply; cookies still come from **Settings → YouTube** or `YT_COOKIE_FILE`. A native install needs a yt-dlp at least as new as the version pinned in `.yt-dlp-version`; older releases lack options the backend now passes, and every download then fails.
 - **Host-file overrides.** Media downloads resolve host names through DNS (`/etc/resolv.conf`), not `/etc/hosts`. Docker's DNS, systemd-resolved and Tailscale MagicDNS work as before.
-- **Emergency switch.** If downloads break because of the proxy, `MEDIA_EGRESS_PROXY=off` restores direct connections while you report the problem. It is not a supported way to run: only YouTube links and searches are accepted while it is off, and the Runtime / media check (Settings → YouTube, Media Library → Library) reports it as a failure.
+- **Emergency switch.** If downloads break because of the proxy, `MEDIA_EGRESS_PROXY=off` restores direct connections for YouTube links and searches only while you report the problem. Radio and other non-YouTube URLs fail closed (no direct connection). It is not a supported way to run, and the Runtime / media check (Settings → YouTube, Media Library → Library) reports it as a failure.
 
 #### Downloads go into a separate cache folder
 
@@ -181,11 +198,124 @@ Every backend container start runs `docker-commands/apply-schema.sh`.
 For an existing persistent database the startup path:
 
 1. checks the schema-version marker;
-2. applies the current Prisma schema with `prisma db push`;
-3. seeds required data when needed; and
-4. records the current schema version.
+2. **preflight playlist name compatibility** (read-only; uses the same JS `trim()` + `toLowerCase()` rules as the app). If duplicates, shared↔server collisions, or blank/whitespace-only playlist names would make uniqueness install refuse, startup **stops here** and leaves the database and schema **unchanged**;
+3. applies the current Prisma schema with `prisma db push`;
+4. **finalises playlist `nameKey` uniqueness** (JS backfill → conflict check → partial unique indexes and triggers);
+5. seeds required data when needed; and
+6. records the current schema version only after step 4 succeeds.
 
-A normal Docker upgrade does not require a separate manual migration command.
+`prisma db push` alone cannot install the playlist uniqueness rules (they are partial SQLite indexes and cross-namespace triggers). Preflight and finalisation never rename, merge, or delete playlists.
+
+### Preview / preflight playlist name compatibility (published images)
+
+Published images ship the compiled CLI (no TypeScript/`tsx` required). Prefer `--preflight` (or `--preview`) against a **copy** of the database before upgrading.
+
+- Exit `0` with `compatible=true` → playlist names are safe for this upgrade.
+- Exit non-zero with a conflict report (`same_scope`, `shared_server`, or `empty_normalized`) → fix names before upgrading.
+- Exit non-zero with `database not found` / `was not checked` → the target file is missing or mistyped; the CLI did **not** treat that as compatible.
+
+Do **not** pass `--allow-absent` for operator checks. That flag is only for container startup on a genuine fresh install.
+
+`docker compose exec` only works while the backend is running. After a refused upgrade the backend often crash-loops, so use a **one-off** `compose run` that does not start sidecar/frontend (this still mounts the compose data volume — fine for inspecting the live path, not for an isolated copy check):
+
+**Split stack** (`docker-compose.yml` service `backend`; working directory `/app/packages/backend`):
+
+```bash
+docker compose run --rm --no-deps --entrypoint node backend \
+  dist/voice/commands/playlist-namekey-finalize-cli.js --preflight
+```
+
+**All-in-one** (`docker-compose.all-in-one.yml` service `ts6`; working directory `/app`):
+
+```bash
+docker compose -f docker-compose.all-in-one.yml \
+  run --rm --no-deps --entrypoint node ts6 \
+  /app/packages/backend/dist/voice/commands/playlist-namekey-finalize-cli.js \
+  --preflight
+```
+
+#### Preflight against a copy (recommended, isolated)
+
+1. **Stop** the backend (or all-in-one) so SQLite is quiescent, **or** use SQLite’s online backup API against a running file (preferred over copying a live `*.db` while writers are active).
+2. Produce a consistent copy into a disposable host directory. Remove any stale destination first so a failed backup cannot leave an old file behind:
+
+```bash
+mkdir -p ./db-check
+rm -f ./db-check/ts6webui.db
+# -readonly fails if the source path is mistyped (does not create an empty source DB).
+if ! sqlite3 -readonly /path/to/live/ts6webui.db ".backup './db-check/ts6webui.db'"; then
+  rm -f ./db-check/ts6webui.db   # sqlite may leave a zero-byte dest on failure
+  echo "backup failed" >&2
+  exit 1
+fi
+test -s ./db-check/ts6webui.db
+```
+
+With the app fully stopped you may instead copy `ts6webui.db` together with any `ts6webui.db-wal` / `ts6webui.db-shm` beside it.
+3. Run a **standalone** container that mounts **only** that directory read-only. Do not use `docker compose run` here — compose still attaches the production data volume.
+
+Replace the image tag with the backend image that contains this release’s compiled CLI (for example `ghcr.io/uniskela/ts6-manager/backend:<this-release-tag>`):
+
+```bash
+docker run --rm \
+  --network none \
+  --entrypoint node \
+  -e DATABASE_URL=file:/check/ts6webui.db \
+  -v "$PWD/db-check:/check:ro" \
+  ghcr.io/uniskela/ts6-manager/backend:<this-release-tag> \
+  dist/voice/commands/playlist-namekey-finalize-cli.js \
+  --preflight
+```
+
+Confirm the log line `database=/check/ts6webui.db`. A mistyped mount or missing file exits non-zero with “database not found” / “was not checked” and never prints `compatible=true`. This command uses no production volume, no secret mounts, no host network, and no Docker socket.
+
+### Backup, restore, and rollback (schema)
+
+1. **Backup** before upgrading: stop the backend (or use `sqlite3 -readonly … ".backup …"` as above), then keep a consistent copy of `ts6webui.db` (plus `-wal`/`-shm` if you copied files cold) and the data volume.
+2. **Upgrade** with the new image (apply-schema runs automatically).
+
+Distinguish these outcomes:
+
+| Situation | Database state | What to do |
+|-----------|----------------|------------|
+| **Failed preflight** (before `db push`) | Original schema and rows unchanged | Previous image tag can start against this database. Use the recovery steps below, or stay on the previous image. |
+| **Successful schema upgrade** (push + finalise recorded) | Newer columns/constraints present | Rollback needs the **previous image tag and the matching database backup**. Do not point an older image at the upgraded database and expect a clean start. |
+| **Partial upgrade** (an earlier pre-release build of this version already ran `db push` / failed mid-finalise) | Schema may already include `nameKey` | v1.11.x does **not** create the `nameKey` schema. Restore the pre-upgrade backup to return to the previous image, or finish fixing names and re-run a fixed new image so finalisation can complete. |
+
+#### Confirm a refused preflight left the database unchanged
+
+On the live data file (read-only; a failed query must not be treated as “unchanged”):
+
+```bash
+count="$(sqlite3 -readonly /path/to/ts6webui.db \
+  "SELECT COUNT(*) FROM pragma_table_info('Playlist') WHERE name = 'nameKey';")" || {
+  echo "could not inspect database — do not assume it is unchanged" >&2
+  exit 1
+}
+if [ "$count" = "0" ]; then
+  echo "no nameKey column — schema looks pre-nameKey / unchanged by refused preflight"
+else
+  echo "nameKey column is present (count=$count)"
+fi
+```
+
+Also confirm `.schema-version` (if present) still shows the previous release marker.
+
+#### Recovery after a refused preflight (database unchanged)
+
+This procedure applies **only** when preflight refused **before** schema changes (logs show preflight failure and no successful `prisma db push` for this upgrade):
+
+1. Confirm the live database was not modified (see the `PRAGMA table_info` check above).
+2. Start the **previous working image** (for example the last v1.11.x tag) against that same database.
+3. In the normal Web UI, rename conflicting playlists so each scope has a unique name after trim + case folding (and fix blank / whitespace-only names).
+4. Stop the backend and **back up** the corrected database.
+5. Retry the upgrade with the new image.
+
+If the schema was **already** mutated (partial upgrade from an earlier pre-release build of this version, or a successful push), do **not** use steps 2–3 against the mutated file as a substitute for backup restore — restore the matching pre-upgrade backup, or complete migration carefully on a copy.
+
+Image-only rollback after a successful schema migration is **not** supported.
+
+A normal Docker upgrade still does not require a separate manual SQL migration when the database is conflict-free.
 
 ## TeamSpeak credentials after upgrade
 

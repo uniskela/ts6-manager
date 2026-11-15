@@ -193,6 +193,7 @@ export function formatQueueMessage(
 /** Short formatted radio station list. */
 export function formatRadioListMessage(
   stations: Array<{ id: number; name: string; genre?: string | null }>,
+  playHint = '!radio <id>',
 ): string {
   const lines: string[] = ['## Radio stations', ''];
   for (const s of stations) {
@@ -200,7 +201,7 @@ export function formatRadioListMessage(
     lines.push(`- **${s.id}** — ${escapeMarkdownInline(s.name)}${genre}`);
   }
   lines.push('');
-  lines.push('_Play with `!radio <id>`_');
+  lines.push(`_Play with \`${playHint}\`_`);
   return lines.join('\n');
 }
 
