@@ -74,8 +74,11 @@ feat!: Commands & Radio with isolated media-fetcher (exclude D1)
 BREAKING CHANGE: remote radio requires the isolated media-fetcher Compose
 overlay on a supported Linux host with Landlock ABI >= 4. Without that
 fetcher, radio fails closed. The legacy in-process ffmpeg radio path is
-unavailable. Station rows are unchanged. Music and YouTube are unchanged.
-Discord Commands & Radio is optional and does not enable voice bridging.
+unavailable. Station rows are unchanged, but radio URLs must use ports
+80/443/8000/8008/8080/8443 and HTTP→HTTPS redirects are refused. Upgrades
+stop before schema changes if playlist names collide case-insensitively;
+fix them first. YouTube playback is unchanged. Discord Commands & Radio
+is optional and does not enable voice bridging.
 ```
 
 ---

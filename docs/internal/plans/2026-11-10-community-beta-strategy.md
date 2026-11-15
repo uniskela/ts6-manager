@@ -1,7 +1,8 @@
 # Community beta strategy for v1.12.0 (internal)
 
 **Status:** Planning only. No publish, public connect, #609 merge, or Bridge-K amendment from this document.  
-**Owner constraint:** Full v1.12.0 scope retained (Bridge D1–D6 5+1, Commands & Radio, Listener Remote, security gates). Cannot rely on four personal friends for D1 A–D. Prefer community volunteers, then an opt-in public beta.  
+**Superseded (15 November 2026):** Option B moved Discord Commands & Radio to **v2.0.0** (#658 Path A; exclude D1) and Discord ↔ TeamSpeak voice bridge D1–D6 to a **later** release. This document’s **10 November 2026** full-scope v1.12.0 framing below is retained as history only. Security gates for whatever release is shipping are not waived.  
+**Owner constraint (historical, 10 November 2026):** Full v1.12.0 scope retained (Bridge D1–D6 5+1, Commands & Radio, Listener Remote, security gates). Cannot rely on four personal friends for D1 A–D. Prefer community volunteers, then an opt-in public beta.  
 **Continuity:** [#648](https://github.com/uniskela/ts6-manager/issues/648). Related: [#504](https://github.com/uniskela/ts6-manager/pull/504), [#563](https://github.com/uniskela/ts6-manager/pull/563), [#601](https://github.com/uniskela/ts6-manager/pull/601), [#609](https://github.com/uniskela/ts6-manager/pull/609).
 
 ## What already exists (D1 lab)

@@ -143,7 +143,7 @@ On `main` for the upcoming **1.12.0** release; tracked in [#442](https://github.
 Not released yet. Development and candidate upgrade documentation: draft [#658](https://github.com/uniskela/ts6-manager/pull/658) (Path A; **excludes** unfinished voice-bridge D1).
 
 - Self-hosted Discord slash commands for TeamSpeak status and music/radio (operator-configured; not one-click onboarding).
-- **Breaking for radio (when v2.0.0 ships):** remote radio needs the isolated media-fetcher overlay on a supported Linux/Landlock host; without it, radio fails closed. Station rows are unchanged. Follow the upgrade text on [#658](https://github.com/uniskela/ts6-manager/pull/658) until that release lands on `main` — do not treat a premature public 2.0.0 upgrade page on `main` as authoritative.
+- **Breaking for radio (when v2.0.0 ships):** remote radio needs the isolated media-fetcher overlay on a supported Linux/Landlock host; without it, radio fails closed. Station rows are unchanged, but previously saved station URLs may become unsupported under the fetcher port and redirect rules. Follow the upgrade text on [#658](https://github.com/uniskela/ts6-manager/pull/658) until that release lands on `main`.
 - Voice bridging is **not** included. `/ts bridge` stays unavailable until a later bridge release.
 
 ### Discord voice bridge — later release
