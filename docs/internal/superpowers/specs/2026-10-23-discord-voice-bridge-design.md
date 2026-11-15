@@ -2,7 +2,9 @@
 
 **Date:** 2026-10-23
 **Status:** Proposed. Draft PR for owner review, not accepted. Do not merge, publish, or start Bridge-D1 until the owner explicitly accepts the contract.
-**Scope:** First-party optional Discord ↔ TeamSpeak voice bridge for v1.12.0 (Bridge-K…D6). Listener remote (#442) is unchanged. v1.11.2 (#460) is unchanged. No change to the native media sidecar, music bots, or listener-remote authentication.
+**Scope:** First-party optional Discord ↔ TeamSpeak voice bridge (Bridge-K…D6). Listener remote (#442) is unchanged. v1.11.2 (#460) is unchanged. No change to the native media sidecar, music bots, or listener-remote authentication.
+
+**Release targeting note (superseded 15 November 2026):** This spec originally targeted v1.12.0. Option B (15 November 2026) moved D1–D6 to a **later** release after v1.12.0 and v2.0.0 Commands & Radio. Bridge-K technical contract is unchanged; only the calendar/release slot changed.
 
 ## Goal
 

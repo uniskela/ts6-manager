@@ -1,6 +1,6 @@
 # Opinionated TS6 Manager Fork Roadmap
 
-Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-focused** (no SSO or full i18n absorption of upstream suites). Discord voice is a first-party optional v1.12.0 feature, not an import of upstream PR #76.
+Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-focused** (no SSO or full i18n absorption of upstream suites). Discord voice is a first-party optional feature for a **later** release (Option B, 2026-11-15: after v1.12.0 Listener Remote and v2.0.0 Commands & Radio), not an import of upstream PR #76.
 
 Community bug reports and PRs that informed this work are listed in [CREDITS.md](../../../CREDITS.md).
 
@@ -45,9 +45,9 @@ Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicate
 - Upstream [#55](https://github.com/clusterzx/ts6-manager/issues/55) scheduled container restart (we don’t manage TS containers)
 - SSO ([#71](https://github.com/clusterzx/ts6-manager/issues/71)) and the rest of PR [#76](https://github.com/clusterzx/ts6-manager/pull/76) (SAML/MFA, full i18n, and that PR’s Discord implementation) — still excluded
 
-### First-party Discord voice (v1.12.0)
+### First-party Discord voice (later release)
 
-Specified in [discord-voice-bridge.md](../discord-voice-bridge.md). Optional, disabled by default. Do not import clusterzx #76 Discord code. Do not fold into v1.11.2 (#460).
+Specified in [discord-voice-bridge.md](../discord-voice-bridge.md). Optional, disabled by default. Under Option B (2026-11-15) this is **after** v1.12.0 and v2.0.0. Do not import clusterzx #76 Discord code. Do not fold into v1.11.2 (#460), v1.12.0, or Commands & Radio v2.0.0.
 
 ### Follow-up feature PRs
 
@@ -66,7 +66,9 @@ The read-only scout surveyed **48 forks** and reported **24 candidate findings**
 
 - **v1.11.2 (#460): no scout changes.** The owner determines release readiness and whether another 1.11.x patch is possible before a `feat:` commit alters Release Please sequencing.
 - **Proposed v1.11.3 (or next eligible patch), [#505](https://github.com/uniskela/ts6-manager/issues/505):** F01, F09–F13 — SSH listener, queue/start race, nginx DNS redeploy, permission diagnostics, voice-listener cleanup, upload correctness. Each requires a current-main reproduction or narrow contract test.
-- **v1.12.0 ([#442](https://github.com/uniskela/ts6-manager/issues/442), [#502](https://github.com/uniskela/ts6-manager/issues/502)):** listener remote + first-party Discord voice only as already specified. F24 is **stream preset/1080p DASH verification**, not new scope. Bridge-D1 real-world evidence and independent review are still required; #504 stays draft until its gates pass. PIN/PWA remains separately deferred to [#464](https://github.com/uniskela/ts6-manager/issues/464).
+- **v1.12.0 ([#442](https://github.com/uniskela/ts6-manager/issues/442) and related on-`main` work):** Under Option B (15 November 2026), ships Listener Remote, music search, playlist voting, session/auth hardening, and related music/UI improvements already on `main` — **not** Discord Commands & Radio and **not** voice bridge D1–D6. F24 is **stream preset/1080p DASH verification**, not new scope. PIN/PWA remains separately deferred to [#464](https://github.com/uniskela/ts6-manager/issues/464).
+- **v2.0.0 ([#658](https://github.com/uniskela/ts6-manager/pull/658)):** Discord Commands & Radio (exclude D1); radio media-fetcher break. Ship after v1.12.0.
+- **Later Discord voice ([#502](https://github.com/uniskela/ts6-manager/issues/502)):** Bridge-D1 real-world evidence and independent review still required; #504 stays draft until its gates pass. Scout text that placed voice in v1.12.0 (written before Option B) was **superseded 15 November 2026**.
 - **Proposed v1.12.1–1.12.x, [#506](https://github.com/uniskela/ts6-manager/issues/506):** F02, F03, F14, F15, F23 (stabilization, safe SSH host-key repin, React Router 7 through #477, CI and video queue QoL); F07, F08, F16 only after real YouTube/network evidence and explicit security decisions. Coordinate F16 with isolated fetcher #476 and checking proxy #479.
 - **v1.13.0, [#297](https://github.com/uniskela/ts6-manager/issues/297):** F17 connection history/offline GeoIP evaluated inside Community Insights with retention/privacy gates and no implicit raw-IP persistence.
 - **v1.14.0, [#299](https://github.com/uniskela/ts6-manager/issues/299):** existing join-protection/observe-only commitments unchanged; country data from F17 is optional, not an enforcement prerequisite.

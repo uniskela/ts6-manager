@@ -6,7 +6,9 @@ TS6 Manager remains an opinionated continuation of [clusterzx/ts6-manager](https
 
 ## Released
 
-Stable TS6 Manager (`v1.11.x`) has no Discord voice integration. There is nothing to install for Discord on a production host.
+Stable TS6 Manager (`v1.11.x` / upcoming **v1.12.0**, which ships Listener Remote and related on-`main` improvements) has no Discord **voice** integration. There is nothing to install for Discord voice on a production host.
+
+**Release sequence (Option B, 2026-11-15):** Discord **Commands & Radio** (slash commands; not voice) is under development as draft [#658](https://github.com/uniskela/ts6-manager/pull/658) and is planned for **v2.0.0**. This voice bridge (D1–D6) remains a **later** release. Commands & Radio does not enable voice bridging.
 
 ## Manager beta
 
@@ -38,4 +40,4 @@ Later phases (setup UI, persistence, manager integration, and a supported operat
 - Use a disposable TeamSpeak server. Do not use a production TeamSpeak server.
 - If a token or address appears in a log, rotate the token and treat the log as secret.
 
-If you came here looking for a installable Discord bridge, stop. Use [Installation](installation.md) for TS6 Manager, and [Beta releases](beta.md) only for manager prereleases.
+If you came here looking for Discord **slash commands** / radio control, see draft [#658](https://github.com/uniskela/ts6-manager/pull/658) (Commands & Radio candidate) — not this voice laboratory. If you came here looking for an installable voice bridge, stop. Use [Installation](installation.md) for TS6 Manager, and [Beta releases](beta.md) only for manager prereleases.

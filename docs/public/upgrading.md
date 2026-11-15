@@ -19,6 +19,23 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Upgrading to 1.12.0
+
+This section covers upgrading from 1.11.4 (or later 1.11.x) to **1.12.0**. Skip it if you are installing fresh.
+
+**Scope.** 1.12.0 ships the changes already on `main` for this release: Listener Remote growth (playlist browse/request, search, playlist voting), music search and related music/UI improvements, session/auth hardening, and other non-breaking fixes already represented in the Release Please notes. It does **not** ship Discord Commands & Radio (draft [#658](https://github.com/uniskela/ts6-manager/pull/658)) or the Discord ↔ TeamSpeak voice bridge.
+
+**Back up the database before starting the 1.12.0 backend.** Stop the backend, then copy its persistent data volume (`ts6webui.db`, journal/WAL files, uploaded IPTV playlists, bot avatars, hosted channel banners) and keep the previous image tag until the upgrade is verified.
+
+After upgrading:
+
+- Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting). TeamSpeak chat controls such as `!playlistvote` remain part of this release where already on `main`.
+- The remote remains its own page; reverse-proxy and `TRUST_PROXY` guidance from 1.11.x still apply ([Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits)).
+- Radio playback is unchanged; no isolated media-fetcher is required for v1.12.0.
+- Other behaviour may differ from 1.11.x where this release intentionally adds or fixes features (for example bot volume persistence, Listener Remote acknowledgements, and search/duration rules). Read the 1.12.0 release notes for the full list.
+
+Rolling back needs the previous image tag and the matching database backup.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.
