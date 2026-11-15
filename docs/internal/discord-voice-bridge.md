@@ -8,13 +8,13 @@ This is the Bridge-K contract. Do not shrink 5+1 to a single-bot product. Do not
 
 Owner-approved sequence:
 
-1. **v1.12.0** — Listener Remote (+ non-breaking); **not** this bridge.
+1. **v1.12.0** — Changes already on `main` (Listener Remote, music search, playlist voting, session hardening, related improvements); **not** this bridge.
 2. **v2.0.0** — Commands & Radio ([#658](https://github.com/uniskela/ts6-manager/pull/658)); **excludes D1**.
 3. **Later** — this Discord ↔ TeamSpeak voice bridge (D1–D6).
 
-**Historical (superseded 2026-11-10):** Bridge-K, Commands & Radio, and Listener Remote were held together as a single v1.12.0 contract (“do not move incomplete bridge work out of v1.12.0 to ship sooner”). That combined-target wording is retained here only as history; Option B supersedes it.
+**Historical record:** On **10 November 2026**, Bridge-K, Commands & Radio, and Listener Remote were held together as a single v1.12.0 contract (“do not move incomplete bridge work out of v1.12.0 to ship sooner”). That decision was **superseded by Option B on 15 November 2026**. The 10 November wording is retained here only as history.
 
-Listener remote ships in v1.12.0. Commands & Radio ship in v2.0.0. Neither waits on D1–D6.
+Listener Remote and other on-`main` v1.12.0 work ship in v1.12.0. Commands & Radio ship in v2.0.0. Neither waits on D1–D6.
 
 Companion spec: [superpowers/specs/2026-10-23-discord-voice-bridge-design.md](superpowers/specs/2026-10-23-discord-voice-bridge-design.md).
 
