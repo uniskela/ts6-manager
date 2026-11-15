@@ -33,29 +33,38 @@ interface FlowInfo {
   flowData: FlowDefinition;
 }
 
+/** Non-negative finite number, or undefined. */
+function toSeconds(value: unknown): number | undefined {
+  const sec = Number(value);
+  return Number.isFinite(sec) && sec >= 0 ? sec : undefined;
+}
+
+/** JSON object of clid → seconds; invalid JSON or entries are dropped. */
+function parseClidSeconds(json: string): Record<string, number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return {};
+  }
+  const byClid: Record<string, number> = {};
+  if (!parsed || typeof parsed !== 'object') return byClid;
+  for (const [clid, value] of Object.entries(parsed)) {
+    const sec = toSeconds(value);
+    if (sec !== undefined) byClid[clid] = sec;
+  }
+  return byClid;
+}
+
 /**
  * Parse `onlinetime_last_<cldbid>`: a JSON map of clid → seconds counted for that
  * connection. Older versions stored one number for the whole user (`legacy`).
  */
 function parseRankSessions(raw: string): { byClid: Record<string, number>; legacy?: number } {
   const trimmed = raw.trim();
-  if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      const byClid: Record<string, number> = {};
-      if (parsed && typeof parsed === 'object') {
-        for (const [clid, value] of Object.entries(parsed)) {
-          const sec = Number(value);
-          if (Number.isFinite(sec) && sec >= 0) byClid[clid] = sec;
-        }
-      }
-      return { byClid };
-    } catch {
-      return { byClid: {} };
-    }
-  }
-  const legacy = parseFloat(trimmed);
-  return { byClid: {}, legacy: Number.isFinite(legacy) && legacy > 0 ? legacy : undefined };
+  if (trimmed.startsWith('{')) return { byClid: parseClidSeconds(trimmed) };
+  const legacy = Number.parseFloat(trimmed);
+  return { byClid: {}, legacy: legacy > 0 ? legacy : undefined };
 }
 
 export class FlowRunner {
@@ -804,7 +813,7 @@ export class FlowRunner {
       // Get total online time from BotVariable (accumulate via cron)
       const varName = `onlinetime_${cldbid}`;
       const lastKey = `onlinetime_last_${cldbid}`;
-      const storedSeconds = parseFloat(await ctx.getVariable(varName)) || 0;
+      const storedSeconds = Number.parseFloat(await ctx.getVariable(varName)) || 0;
       const lastCounted = parseRankSessions(await ctx.getVariable(lastKey));
 
       // Seconds counted so far are tracked per clid. The user was online for the
