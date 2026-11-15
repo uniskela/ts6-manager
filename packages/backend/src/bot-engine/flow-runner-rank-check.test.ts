@@ -175,3 +175,19 @@ test('rankCheck surfaces clientinfo errors other than a vanished client', async 
 
   await assert.rejects(runRankCheck(h, [{ hours: 1, groupId: '7' }]), /insufficient client permissions/);
 });
+
+test('rankCheck ignores a non-finite stored last-counted value', async () => {
+  const h = makeHarness({
+    clients: [{ clid: '5', client_database_id: '42', client_type: '0', client_servergroups: '8' }],
+    connectedMs: { '5': 600_000 },
+  });
+  h.vars.set('onlinetime_last_42', 'Infinity');
+  const ranks = [{ hours: 1000, groupId: '7' }];
+
+  await runRankCheck(h, ranks);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 600);
+
+  h.connectedMs['5'] = 900_000;
+  await runRankCheck(h, ranks);
+  assert.equal(Number(h.vars.get('onlinetime_42')), 900);
+});

@@ -64,7 +64,7 @@ function parseRankSessions(raw: string): { byClid: Record<string, number>; legac
   const trimmed = raw.trim();
   if (trimmed.startsWith('{')) return { byClid: parseClidSeconds(trimmed) };
   const legacy = Number.parseFloat(trimmed);
-  return { byClid: {}, legacy: legacy > 0 ? legacy : undefined };
+  return { byClid: {}, legacy: toSeconds(legacy) };
 }
 
 export class FlowRunner {
