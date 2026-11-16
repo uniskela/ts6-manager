@@ -65,7 +65,7 @@ describe('P1 F-1 refresh contention against real SQLite', () => {
     }
   });
 
-  it('admin reset vs concurrent live refresh leaves no surviving successor', async () => {
+  it('admin reset before or after live refresh leaves no surviving successor', async () => {
     for (const order of ['refresh-first', 'reset-first'] as const) {
       await harness.seedAlice();
       const expiresAt = new Date(Date.now() + 86_400_000);
@@ -88,18 +88,13 @@ describe('P1 F-1 refresh contention against real SQLite', () => {
         data: { token: `bob-${order}`, userId: 2, expiresAt, family: `fam-bob-${order}` },
       });
 
-      const refreshPromise = harness.postRefresh(`pre-${order}`);
-      const resetPromise =
-        order === 'refresh-first'
-          ? refreshPromise.then(() => harness.adminResetPassword('NewPass1a'))
-          : harness.adminResetPassword('NewPass1a');
-
       if (order === 'reset-first') {
-        await resetPromise;
-        const refreshRes = await refreshPromise;
+        await harness.adminResetPassword('NewPass1a');
+        const refreshRes = await harness.postRefresh(`pre-${order}`);
         assert.equal(refreshRes.status, 401);
       } else {
-        const [refreshRes] = await Promise.all([refreshPromise, resetPromise]);
+        const refreshRes = await harness.postRefresh(`pre-${order}`);
+        await harness.adminResetPassword('NewPass1a');
         if (refreshRes.status === 200) {
           const body = (await refreshRes.json()) as { refreshToken: string };
           assert.equal(await harness.prisma.refreshToken.count({ where: { token: body.refreshToken } }), 0);

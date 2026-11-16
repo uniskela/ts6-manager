@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '../../../generated/prisma/index.js';
 import { createAuthApp, postAuthRefresh } from './mount-auth-app.js';
@@ -27,8 +28,8 @@ export async function openAuthSqliteHarness(tempPrefix: string): Promise<AuthSql
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 
   execFileSync(
-    'npx',
-    ['prisma', 'db', 'push', '--skip-generate', '--accept-data-loss'],
+    process.execPath,
+    [fileURLToPath(import.meta.resolve('prisma/build/index.js')), 'db', 'push', '--skip-generate', '--accept-data-loss'],
     {
       cwd: join(import.meta.dirname, '../../..'),
       env: { ...process.env, DATABASE_URL: databaseUrl },
