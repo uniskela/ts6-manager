@@ -2,8 +2,10 @@
  * P1-B: real SQLite/Prisma proofs for atomic refresh rotation and family revoke.
  *
  * Handling notes (no replay grace period; no global all-device revoke):
- * - Consumed rows retained until expiresAt; replay uses replacedBy and deletes
- *   only that userId+family (null family = legacy null-family rows only).
+ * - Consumed rows are retained until background retention deletes them (by
+ *   expiresAt). Replay uses replacedBy first and deletes only that
+ *   userId+family (null family = legacy null-family rows only); an unpurged
+ *   consumed row can still revoke its family after wall-clock expiry.
  * - First rotate of a null-family row assigns a nanoid family.
  * - Concurrent same-token refresh: CAS updateMany — one winner; loser 401
  *   without family revoke (proven with beforeRefreshRotate barriers). Uncontrolled

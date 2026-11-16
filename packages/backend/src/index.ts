@@ -20,6 +20,7 @@ import fs from 'fs';
 import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
 import { ListenerRemoteRefusalAudit, startAuditRetention } from './audit/index.js';
+import { startRefreshTokenRetention } from './auth/refresh-token-retention.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 import { startMediaEgress } from './voice/egress/media-egress.js';
@@ -170,6 +171,7 @@ async function main() {
 
   const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
   const stopAuditRetention = startAuditRetention(prisma);
+  const stopRefreshTokenRetention = startRefreshTokenRetention(prisma);
 
   // Media downloads connect only through the checking proxy; log its state before serving.
   await startMediaEgress();
@@ -186,6 +188,7 @@ async function main() {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
     stopAuditRetention();
+    stopRefreshTokenRetention();
     await activityJournal.stop();
 
     await voiceBotManager.stopAll();

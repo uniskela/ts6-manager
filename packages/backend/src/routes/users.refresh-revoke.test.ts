@@ -427,59 +427,11 @@ describe('P1-A admin refresh-token revocation', () => {
     }
   });
 
-  it('documents known admin-reset/refresh race defect pending P1-B (not final behaviour)', async () => {
-    // Known defect on P1-A alone / release blocker until P1-B: in-flight refresh can mint
-    // a usable successor after admin password reset. Invert to 401 / no successor when
-    // merging with P1-B (see security/p1ab-integration-gate).
-    // Harness: claim held open → admin deleteMany → create() after revoke.
-    let releaseClaim!: () => void;
-    const claimGate = new Promise<void>((resolve) => {
-      releaseClaim = resolve;
-    });
-    let adminDone!: () => void;
-    const adminGate = new Promise<void>((resolve) => {
-      adminDone = resolve;
-    });
-
-    const store = createStore({
-      onRefreshClaim: async () => {
-        adminDone();
-        await claimGate;
-      },
-    });
-    store.seedRefresh(2, 'refresh-race-1', 'fam-race');
-    const claimedId = [...store.refreshTokens.values()][0]!.id;
-
-    const { base, close } = await mountApp(store.prisma);
-    try {
-      const refreshPromise = fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'refresh-race-1' }),
-      });
-
-      await adminGate;
-      const put = await putUser(base, { password: 'NewPass1a' });
-      assert.equal(put.status, 204);
-      assert.equal(store.refreshTokens.has(claimedId), false);
-
-      releaseClaim();
-      const refreshRes = await refreshPromise;
-      const body = (await refreshRes.json()) as { refreshToken?: string };
-      assert.equal(
-        refreshRes.status,
-        200,
-        'defect pinned on P1-A alone: successor mint after reset — invert under P1-B merge',
-      );
-      assert.ok(body.refreshToken);
-      assert.notEqual(body.refreshToken, 'refresh-race-1');
-      assert.equal(
-        [...store.refreshTokens.values()].some((r) => r.token === body.refreshToken),
-        true,
-        'defect pinned: live successor after reset — must be absent under P1-B',
-      );
-    } finally {
-      await close();
-    }
-  });
+  // F-2: the old mock race test asserted a post-reset successor (P1-A defect pin).
+  // In-memory mocks cannot faithfully model SQLite transaction isolation for the
+  // P1-B fix. Real-SQLite regressions live in:
+  // - auth.refresh-rotation.sqlite.test.ts
+  //     "admin-style deleteMany…cannot leave a post-reset successor…"
+  //     "in-flight refresh cannot leave a live token after password-change revocation"
+  // - auth.refresh-contention.sqlite.test.ts (admin reset/disable vs concurrent refresh)
 });
