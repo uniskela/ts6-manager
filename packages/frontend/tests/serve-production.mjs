@@ -486,6 +486,20 @@ const FIXTURE_METHODS = new Map([
   ['/api/auth/me', 'GET'],
 ]);
 
+/**
+ * The complete upstream URL and method for each forwarded path.
+ *
+ * Built ONCE at start-up from the validated loopback fixture origin and the
+ * fixed allow-listed paths. Each entry is a constant, so the forwarded
+ * request cannot be influenced by anything in the incoming request.
+ */
+const FIXTURE_TARGETS = new Map(
+  [...FIXTURE_METHODS].map(([path, method]) => [
+    path,
+    { url: `${fixtureUpstream ? fixtureUpstream.origin : 'http://127.0.0.1'}${path}`, method },
+  ]),
+);
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
@@ -503,14 +517,14 @@ const server = createServer(async (req, res) => {
       : ALLOWED_AUTH_PATHS.has(url.pathname)
         ? url.pathname
         : '/__test/refresh-state';
-    // The upstream target is a single URL string built from the validated
-    // loopback fixture origin and an allow-listed path. The HTTP method comes
-    // from a fixed map rather than from the request, so nothing read from the
-    // incoming request can influence the proxy target.
-    const method = FIXTURE_METHODS.get(targetPath) ?? 'POST';
-    const upstreamUrl = `${fixtureUpstream.origin}${targetPath}`;
-    const upstream = httpRequest(upstreamUrl, {
-      method,
+    // The upstream target comes from a table of complete URLs built ONCE at
+    // start-up from the validated loopback fixture origin and the fixed
+    // allow-listed paths. Nothing read from the incoming request can reach the
+    // request at all: the path is looked up in a table, and the URL is a
+    // constant. The method is fixed per path for the same reason.
+    const target = FIXTURE_TARGETS.get(targetPath);
+    const upstream = httpRequest(target.url, {
+      method: target.method,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
     }, (reply) => {
       res.writeHead(reply.statusCode, reply.headers);
