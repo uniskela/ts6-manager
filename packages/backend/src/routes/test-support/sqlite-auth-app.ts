@@ -98,11 +98,13 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
     }
     return true;
   };
-  app.use('/api', (req, res, next) => {
+  // The limiter is mounted directly in front of each guarded handler so the
+  // budget visibly covers every exposed route.
+  const limit = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (!consumeBudget(res)) return;
     next();
-  });
-  app.use('/api/auth', (req, res, next) => {
+  };
+  app.use('/api/auth', limit, (req, res, next) => {
     if (req.path === '/refresh') presented.push(req.body.refreshToken);
     const json = res.json.bind(res);
     res.json = (body) => {
@@ -140,7 +142,7 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
       res.json({ events, rotateCount, presentedCount: presented.length });
     } catch (err) { next(err); }
   });
-  app.use('/api/users', authMiddleware, userRoutes);
+  app.use('/api/users', limit, authMiddleware, userRoutes);
   const captureError: ErrorRequestHandler = (err, _req, _res, next) => {
     if (typeof err?.code === 'string') errors.push(err.code);
     next(err);

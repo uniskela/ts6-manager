@@ -479,20 +479,27 @@ const server = createServer(async (req, res) => {
     || ALLOWED_FIXTURE_PATHS.has(url.pathname))) {
     // The forwarded target is built from the ALLOWED ROUTE PATHS only — the
     // request's path is matched against a fixed allow-list, never used to
-    // compose a URL. The origin always comes from the validated loopback
-    // fixture URL, so this cannot become a request proxy.
+    // compose a URL, and the query string is dropped. The origin always comes
+    // from the validated loopback fixture URL, so this cannot become a
+    // request proxy.
     const targetPath = ALLOWED_FIXTURE_PATHS.has(url.pathname)
       ? url.pathname
       : ALLOWED_AUTH_PATHS.has(url.pathname)
         ? url.pathname
         : '/__test/refresh-state';
+    // Only the headers the upstream needs are forwarded, so nothing from the
+    // request can influence the target.
+    const forwardedHeaders = {
+      'content-type': req.headers['content-type'] ?? 'application/json',
+      accept: req.headers.accept ?? 'application/json',
+    };
     const upstream = httpRequest({
       protocol: fixtureUpstream.protocol,
       hostname: fixtureUpstream.hostname,
       port: fixtureUpstream.port,
-      path: targetPath + url.search,
+      path: targetPath,
       method: req.method,
-      headers: req.headers,
+      headers: forwardedHeaders,
     }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
     req.pipe(upstream);
