@@ -338,12 +338,18 @@ test('adverse: leader closes after the server committed the rotation', async ({ 
     });
     const hooks = await expireAll(pages);
     const pendings = hooks.map((h) => h.refreshNow().catch(() => null));
-    // Wait until the server has committed the first rotation.
-    for (let k = 0; k < 100; k++) {
+    // Wait until the server has committed the first rotation AND the request
+    // has been captured. Under load the interception can engage late, so the
+    // wait is on BOTH conditions rather than assuming the capture happened.
+    let captured = false;
+    for (let k = 0; k < 200; k++) {
       const s = await refreshState(request);
-      if (s.rotateCount >= 1) break;
+      if (s.rotateCount >= 1 && capture.leaderIndex !== -1) { captured = true; break; }
       await new Promise((r) => setTimeout(r, 50));
     }
+    // The scenario is only meaningful if the leader's request was actually
+    // intercepted. If it was not, the test would silently assert nothing.
+    expect(captured, 'the leader refresh request must be intercepted').toBe(true);
 
     // The server committed the rotation; no browser has received R1.
     const afterCommit = await refreshState(request);

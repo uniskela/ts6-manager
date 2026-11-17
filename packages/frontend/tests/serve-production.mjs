@@ -503,20 +503,16 @@ const server = createServer(async (req, res) => {
       : ALLOWED_AUTH_PATHS.has(url.pathname)
         ? url.pathname
         : '/__test/refresh-state';
-    // The upstream request is built entirely from the validated fixture URL, an
-    // allow-listed path and a FIXED header set. The HTTP method comes from a
-    // small fixed mapping rather than from the request, so nothing read from
-    // the incoming request can influence the proxy target.
+    // The upstream target is a single URL string built from the validated
+    // loopback fixture origin and an allow-listed path. The HTTP method comes
+    // from a fixed map rather than from the request, so nothing read from the
+    // incoming request can influence the proxy target.
     const method = FIXTURE_METHODS.get(targetPath) ?? 'POST';
-    const upstreamOptions = {
-      protocol: fixtureUpstream.protocol,
-      hostname: fixtureUpstream.hostname,
-      port: fixtureUpstream.port,
-      path: targetPath,
+    const upstreamUrl = `${fixtureUpstream.origin}${targetPath}`;
+    const upstream = httpRequest(upstreamUrl, {
       method,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-    };
-    const upstream = httpRequest(upstreamOptions, (reply) => {
+    }, (reply) => {
       res.writeHead(reply.statusCode, reply.headers);
       reply.pipe(res);
     });
