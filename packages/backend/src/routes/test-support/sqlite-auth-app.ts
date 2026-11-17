@@ -1,5 +1,6 @@
 /** Disposable real-route fixture; no production database or network services. */
 import express, { type Express, type ErrorRequestHandler } from 'express';
+import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -79,31 +80,15 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
   });
   // Bounded request budget for the fixture's API routes. The fixture is a
   // disposable test double, but it still exposes authentication and
-  // administrative handlers, so it applies a generous limit rather than
-  // leaving them unbounded. The budget is far above what the coordination
-  // tests use.
-  const budget = { windowStart: Date.now(), count: 0 };
-  const RATE_WINDOW_MS = 60_000;
-  const RATE_MAX = 20_000;
-  const consumeBudget = (res: express.Response): boolean => {
-    const nowMs = Date.now();
-    if (nowMs - budget.windowStart >= RATE_WINDOW_MS) {
-      budget.windowStart = nowMs;
-      budget.count = 0;
-    }
-    budget.count++;
-    if (budget.count > RATE_MAX) {
-      res.status(429).json({ error: 'Too many requests' });
-      return false;
-    }
-    return true;
-  };
-  // The limiter is mounted directly in front of each guarded handler so the
-  // budget visibly covers every exposed route.
-  const limit = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (!consumeBudget(res)) return;
-    next();
-  };
+  // administrative handlers, so it applies a limit rather than leaving them
+  // unbounded. It uses the same rate limiter as the production routes, with a
+  // budget far above what the coordination tests use.
+  const limit = rateLimit({
+    windowMs: 60_000,
+    max: 20_000,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
   app.use('/api/auth', limit, (req, res, next) => {
     if (req.path === '/refresh') presented.push(req.body.refreshToken);
     const json = res.json.bind(res);

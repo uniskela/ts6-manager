@@ -508,16 +508,28 @@ const server = createServer(async (req, res) => {
     // small fixed mapping rather than from the request, so nothing read from
     // the incoming request can influence the proxy target.
     const method = FIXTURE_METHODS.get(targetPath) ?? 'POST';
-    const upstream = httpRequest({
+    const upstreamOptions = {
       protocol: fixtureUpstream.protocol,
       hostname: fixtureUpstream.hostname,
       port: fixtureUpstream.port,
       path: targetPath,
       method,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-    }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
+    };
+    const upstream = httpRequest(upstreamOptions, (reply) => {
+      res.writeHead(reply.statusCode, reply.headers);
+      reply.pipe(res);
+    });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
-    req.pipe(upstream);
+    // Forward the request body explicitly rather than piping the raw request,
+    // so only the JSON body is relayed to the fixture.
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (body.length > 0) upstream.write(body);
+      upstream.end();
+    });
     return;
   }
   if (url.pathname.startsWith('/__test/')) {
