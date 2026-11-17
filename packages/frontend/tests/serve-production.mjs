@@ -414,13 +414,49 @@ const dashboards = {
     },
   },
 };
+// Optional real SQLite auth fixture for cross-tab coordination regressions.
+//
+// The upstream address comes from the environment, so it is validated before
+// use: it must be an absolute http(s) URL pointing at a LOOPBACK host. The
+// fixture only ever runs locally, and this keeps a mis-set environment
+// variable from turning the test server into a request proxy.
+function resolveFixtureUpstream() {
+  const raw = process.env.AUTH_BACKEND_URL;
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('AUTH_BACKEND_URL must be an absolute URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`AUTH_BACKEND_URL must use http or https (got ${parsed.protocol})`);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!isLoopback) {
+    throw new Error(`AUTH_BACKEND_URL must point at a loopback host (got ${host})`);
+  }
+  return parsed;
+}
+
+let fixtureUpstream = null;
+try {
+  fixtureUpstream = resolveFixtureUpstream();
+} catch (err) {
+  throw err;
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
   // Optional real SQLite auth fixture for cross-tab coordination regressions.
-  if (process.env.AUTH_BACKEND_URL && (/^\/api\/auth(\/|$)/.test(url.pathname)
+  if (fixtureUpstream && (/^\/api\/auth(\/|$)/.test(url.pathname)
     || ['/__test/reset', '/__test/refresh-state', '/__test/refresh-diagnostics'].includes(url.pathname))) {
-    const upstream = httpRequest(new URL(req.url, process.env.AUTH_BACKEND_URL), {
+    // The target path comes from the request, but only the PATH is taken from
+    // it; the origin always comes from the validated loopback fixture URL.
+    const target = new URL(url.pathname + url.search, fixtureUpstream.origin);
+    const upstream = httpRequest(target, {
       method: req.method, headers: req.headers,
     }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
