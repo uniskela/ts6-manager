@@ -470,6 +470,22 @@ const ALLOWED_AUTH_PATHS = new Set([
   '/api/auth/me',
 ]);
 
+/**
+ * The HTTP method used for each forwarded path.
+ *
+ * The method is taken from this fixed map rather than from the incoming
+ * request, so a request cannot influence how the proxy calls the upstream.
+ */
+const FIXTURE_METHODS = new Map([
+  ['/__test/reset', 'POST'],
+  ['/__test/refresh-state', 'GET'],
+  ['/__test/refresh-diagnostics', 'GET'],
+  ['/api/auth/login', 'POST'],
+  ['/api/auth/refresh', 'POST'],
+  ['/api/auth/logout', 'POST'],
+  ['/api/auth/me', 'GET'],
+]);
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
@@ -487,19 +503,18 @@ const server = createServer(async (req, res) => {
       : ALLOWED_AUTH_PATHS.has(url.pathname)
         ? url.pathname
         : '/__test/refresh-state';
-    // Only the headers the upstream needs are forwarded, so nothing from the
-    // request can influence the target.
-    const forwardedHeaders = {
-      'content-type': req.headers['content-type'] ?? 'application/json',
-      accept: req.headers.accept ?? 'application/json',
-    };
+    // The upstream request is built entirely from the validated fixture URL, an
+    // allow-listed path and a FIXED header set. The HTTP method comes from a
+    // small fixed mapping rather than from the request, so nothing read from
+    // the incoming request can influence the proxy target.
+    const method = FIXTURE_METHODS.get(targetPath) ?? 'POST';
     const upstream = httpRequest({
       protocol: fixtureUpstream.protocol,
       hostname: fixtureUpstream.hostname,
       port: fixtureUpstream.port,
       path: targetPath,
-      method: req.method,
-      headers: forwardedHeaders,
+      method,
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
     }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
     req.pipe(upstream);

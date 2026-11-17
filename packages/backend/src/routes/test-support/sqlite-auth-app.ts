@@ -142,7 +142,9 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
       res.json({ events, rotateCount, presentedCount: presented.length });
     } catch (err) { next(err); }
   });
-  app.use('/api/users', limit, authMiddleware, userRoutes);
+  app.use('/api/users', limit, authMiddleware, (req, res, next) => {
+    userRoutes(req, res, next);
+  });
   const captureError: ErrorRequestHandler = (err, _req, _res, next) => {
     if (typeof err?.code === 'string') errors.push(err.code);
     next(err);
