@@ -77,14 +77,15 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
         consumedCount: await prisma.refreshToken.count({ where: { replacedBy: { not: null } } }), engine, errors });
     } catch (err) { next(err); }
   });
-  // Bounded request budget for the fixture's auth routes. The fixture is a
-  // disposable test double, but it still exposes an authentication handler,
-  // so it applies a generous limit rather than leaving it unbounded. The
-  // budget is high enough that the coordination tests never hit it.
+  // Bounded request budget for the fixture's API routes. The fixture is a
+  // disposable test double, but it still exposes authentication and
+  // administrative handlers, so it applies a generous limit rather than
+  // leaving them unbounded. The budget is far above what the coordination
+  // tests use.
   const budget = { windowStart: Date.now(), count: 0 };
   const RATE_WINDOW_MS = 60_000;
   const RATE_MAX = 20_000;
-  app.use('/api/auth', (req, res, next) => {
+  const consumeBudget = (res: express.Response): boolean => {
     const nowMs = Date.now();
     if (nowMs - budget.windowStart >= RATE_WINDOW_MS) {
       budget.windowStart = nowMs;
@@ -93,8 +94,15 @@ export async function openSqliteAuthApp(pool: SqliteAuthPool): Promise<{
     budget.count++;
     if (budget.count > RATE_MAX) {
       res.status(429).json({ error: 'Too many requests' });
-      return;
+      return false;
     }
+    return true;
+  };
+  app.use('/api', (req, res, next) => {
+    if (!consumeBudget(res)) return;
+    next();
+  });
+  app.use('/api/auth', (req, res, next) => {
     if (req.path === '/refresh') presented.push(req.body.refreshToken);
     const json = res.json.bind(res);
     res.json = (body) => {

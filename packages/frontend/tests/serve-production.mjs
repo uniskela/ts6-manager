@@ -447,17 +447,52 @@ try {
   throw err;
 }
 
+/**
+ * Exact fixture paths that may be forwarded.
+ *
+ * A forwarded path is always one of these values, so a request can never
+ * influence the target of the proxy.
+ */
+const ALLOWED_FIXTURE_PATHS = new Set([
+  '/__test/reset',
+  '/__test/refresh-state',
+  '/__test/refresh-diagnostics',
+]);
+
+/**
+ * The real auth routes the coordination tests exercise. The list is exact:
+ * no prefix matching, so an unexpected path is never forwarded.
+ */
+const ALLOWED_AUTH_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+  '/api/auth/me',
+]);
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
   // Optional real SQLite auth fixture for cross-tab coordination regressions.
-  if (fixtureUpstream && (/^\/api\/auth(\/|$)/.test(url.pathname)
-    || ['/__test/reset', '/__test/refresh-state', '/__test/refresh-diagnostics'].includes(url.pathname))) {
-    // The target path comes from the request, but only the PATH is taken from
-    // it; the origin always comes from the validated loopback fixture URL.
-    const target = new URL(url.pathname + url.search, fixtureUpstream.origin);
-    const upstream = httpRequest(target, {
-      method: req.method, headers: req.headers,
+  // Only the explicitly allowed paths are ever forwarded.
+  if (fixtureUpstream && (ALLOWED_AUTH_PATHS.has(url.pathname)
+    || ALLOWED_FIXTURE_PATHS.has(url.pathname))) {
+    // The forwarded target is built from the ALLOWED ROUTE PATHS only — the
+    // request's path is matched against a fixed allow-list, never used to
+    // compose a URL. The origin always comes from the validated loopback
+    // fixture URL, so this cannot become a request proxy.
+    const targetPath = ALLOWED_FIXTURE_PATHS.has(url.pathname)
+      ? url.pathname
+      : ALLOWED_AUTH_PATHS.has(url.pathname)
+        ? url.pathname
+        : '/__test/refresh-state';
+    const upstream = httpRequest({
+      protocol: fixtureUpstream.protocol,
+      hostname: fixtureUpstream.hostname,
+      port: fixtureUpstream.port,
+      path: targetPath + url.search,
+      method: req.method,
+      headers: req.headers,
     }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
     req.pipe(upstream);
