@@ -1,5 +1,5 @@
 // Test-only origin serving real production artifacts. Never ships in dist.
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const { WebSocketServer } = createRequire(new URL('../../backend/package.json', import.meta.url))('ws');
@@ -417,6 +417,16 @@ const dashboards = {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
+  // Optional real SQLite auth fixture for cross-tab coordination regressions.
+  if (process.env.AUTH_BACKEND_URL && (/^\/api\/auth(\/|$)/.test(url.pathname)
+    || ['/__test/reset', '/__test/refresh-state', '/__test/refresh-diagnostics'].includes(url.pathname))) {
+    const upstream = httpRequest(new URL(req.url, process.env.AUTH_BACKEND_URL), {
+      method: req.method, headers: req.headers,
+    }, (reply) => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
+    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    req.pipe(upstream);
+    return;
+  }
   if (url.pathname.startsWith('/__test/')) {
     if (url.pathname === '/__test/update') generation++;
     // Stand-in for an authenticating proxy's login: renew, then send the browser back.
