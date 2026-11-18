@@ -1,0 +1,57 @@
+# Discord bridge lab package — independent of the root pnpm workspace.
+# Typecheck + verified full suite only. No publish, GHCR, deploy, or secrets.
+name: Discord bridge CI
+
+on:
+  pull_request:
+    paths:
+      - "packages/discord-bridge/**"
+      - "packages/backend/src/voice/tslib/**"
+      - ".github/workflows/discord-bridge-ci.yml"
+
+concurrency:
+  group: discord-bridge-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-test:
+    name: Typecheck and verified tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: packages/discord-bridge
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 9
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/discord-bridge/pnpm-lock.yaml
+
+      # Own lockfile; excluded from the workspace via pnpm-workspace.yaml.
+      # Native Opus/DAVE addons compile here (ubuntu-latest provides a C toolchain).
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      # pretypecheck / pretest already run scripts/sync-tslib.mjs (backend tslib → .vendor).
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      # run-tests.mjs verifies completeness against scripts/expected-tests.json (no --update).
+      - name: Run verified test suite
+        run: pnpm test
