@@ -1,5 +1,5 @@
 // Test-only origin serving real production artifacts. Never ships in dist.
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const { WebSocketServer } = createRequire(new URL('../../backend/package.json', import.meta.url))('ws');
@@ -414,9 +414,134 @@ const dashboards = {
     },
   },
 };
+// Optional real SQLite auth fixture for cross-tab coordination regressions.
+//
+// The upstream address comes from the environment, so it is validated before
+// use: it must be an absolute http(s) URL pointing at a LOOPBACK host. The
+// fixture only ever runs locally, and this keeps a mis-set environment
+// variable from turning the test server into a request proxy.
+function resolveFixtureUpstream() {
+  const raw = process.env.AUTH_BACKEND_URL;
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('AUTH_BACKEND_URL must be an absolute URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`AUTH_BACKEND_URL must use http or https (got ${parsed.protocol})`);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!isLoopback) {
+    throw new Error(`AUTH_BACKEND_URL must point at a loopback host (got ${host})`);
+  }
+  return parsed;
+}
+
+let fixtureUpstream = null;
+try {
+  fixtureUpstream = resolveFixtureUpstream();
+} catch (err) {
+  throw err;
+}
+
+/**
+ * Exact fixture paths that may be forwarded.
+ *
+ * A forwarded path is always one of these values, so a request can never
+ * influence the target of the proxy.
+ */
+const ALLOWED_FIXTURE_PATHS = new Set([
+  '/__test/reset',
+  '/__test/refresh-state',
+  '/__test/refresh-diagnostics',
+]);
+
+/**
+ * The real auth routes the coordination tests exercise. The list is exact:
+ * no prefix matching, so an unexpected path is never forwarded.
+ */
+const ALLOWED_AUTH_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+  '/api/auth/me',
+]);
+
+/**
+ * The HTTP method used for each forwarded path.
+ *
+ * The method is taken from this fixed map rather than from the incoming
+ * request, so a request cannot influence how the proxy calls the upstream.
+ */
+const FIXTURE_METHODS = new Map([
+  ['/__test/reset', 'POST'],
+  ['/__test/refresh-state', 'GET'],
+  ['/__test/refresh-diagnostics', 'GET'],
+  ['/api/auth/login', 'POST'],
+  ['/api/auth/refresh', 'POST'],
+  ['/api/auth/logout', 'POST'],
+  ['/api/auth/me', 'GET'],
+]);
+
+/**
+ * The complete upstream URL and method for each forwarded path.
+ *
+ * Built ONCE at start-up from the validated loopback fixture origin and the
+ * fixed allow-listed paths. Each entry is a constant, so the forwarded
+ * request cannot be influenced by anything in the incoming request.
+ */
+const FIXTURE_TARGETS = new Map(
+  [...FIXTURE_METHODS].map(([path, method]) => [
+    path,
+    { url: `${fixtureUpstream ? fixtureUpstream.origin : 'http://127.0.0.1'}${path}`, method },
+  ]),
+);
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
+  // Optional real SQLite auth fixture for cross-tab coordination regressions.
+  // Only the explicitly allowed paths are ever forwarded.
+  if (fixtureUpstream && (ALLOWED_AUTH_PATHS.has(url.pathname)
+    || ALLOWED_FIXTURE_PATHS.has(url.pathname))) {
+    // The forwarded target is built from the ALLOWED ROUTE PATHS only — the
+    // request's path is matched against a fixed allow-list, never used to
+    // compose a URL, and the query string is dropped. The origin always comes
+    // from the validated loopback fixture URL, so this cannot become a
+    // request proxy.
+    const targetPath = ALLOWED_FIXTURE_PATHS.has(url.pathname)
+      ? url.pathname
+      : ALLOWED_AUTH_PATHS.has(url.pathname)
+        ? url.pathname
+        : '/__test/refresh-state';
+    // The upstream target comes from a table of complete URLs built ONCE at
+    // start-up from the validated loopback fixture origin and the fixed
+    // allow-listed paths. Nothing read from the incoming request can reach the
+    // request at all: the path is looked up in a table, and the URL is a
+    // constant. The method is fixed per path for the same reason.
+    const target = FIXTURE_TARGETS.get(targetPath);
+    const upstream = httpRequest(target.url, {
+      method: target.method,
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+    }, (reply) => {
+      res.writeHead(reply.statusCode, reply.headers);
+      reply.pipe(res);
+    });
+    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    // Forward the request body explicitly rather than piping the raw request,
+    // so only the JSON body is relayed to the fixture.
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (body.length > 0) upstream.write(body);
+      upstream.end();
+    });
+    return;
+  }
   if (url.pathname.startsWith('/__test/')) {
     if (url.pathname === '/__test/update') generation++;
     // Stand-in for an authenticating proxy's login: renew, then send the browser back.

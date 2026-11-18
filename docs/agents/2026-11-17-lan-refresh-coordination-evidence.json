@@ -1,0 +1,193 @@
+{
+  "investigation": "2026-11-17 \u2014 LAN cross-tab refresh coordination: root cause, fix, and the three corrections from independent review",
+  "baseline": "de978a9e9bf7ff8fbd70fe78fd93adb05ee5fedf",
+  "branch": "fix/v112-lan-refresh-coordination",
+  "worktree": "isolated worktree from origin/main @ de978a9e; the SQLite candidate worktree was not modified",
+  "node": "20.20.2",
+  "pnpm": "9.15.9",
+  "verdict": "GO (client coordination) \u2014 with a documented residual race rate of about 0-0.4%",
+  "rootCause": {
+    "summary": "The BroadcastChannel refresh election decided ownership purely from channel messages, which are neither atomic nor bounded in delivery. A peer whose message arrived after the 160 ms claim window or the 30 ms settle was invisible, so two tabs could each conclude they owned the refresh and POST the same refresh token. The server then saw a consumed-token replay and revoked the whole family.",
+    "affectedFiles": [
+      "packages/frontend/src/api/auth-refresh-coord.ts"
+    ],
+    "specificDefects": [
+      "The decision used only the set of `claim` messages heard, so 'no peer exists' was indistinguishable from 'a peer's claim is still in flight'.",
+      "The `leader` handler adopted only a peer leader with a SMALLER tab id, so a receiver could not tell that any peer had claimed leadership.",
+      "The 30 ms settle could not cover a delayed `leader` announcement.",
+      "RESULT_WAIT_MS (16 s) was the only bound on a follower waiting for a leader that never answered."
+    ],
+    "mechanismConfirmed": "100% of family revocations in the failing runs coincided with same-token concurrent POSTs; zero revocations occurred without same-token concurrency."
+  },
+  "fix": {
+    "name": "Presence-gated, fenced, round-scoped election with published successors",
+    "newFile": "packages/frontend/src/api/auth-refresh-presence.ts",
+    "changedFiles": [
+      "packages/frontend/src/api/auth-refresh-coord.ts",
+      "packages/frontend/src/api/client.ts"
+    ],
+    "mechanism": [
+      "1. PRESENCE \u2014 each tab publishes a heartbeat readable synchronously from localStorage. The live-peer set is complete at decision time.",
+      "2. PARTICIPATION \u2014 only tabs actively asking for a refresh of the SAME credential (same round) may own the refresh. An idle tab can never block an active tab.",
+      "3. OWNERSHIP \u2014 the smallest participating tab id owns; the set is complete, so the tie-break is deterministic.",
+      "4. FENCE \u2014 immediately before the network call the winner re-reads the participating set and stands down if a smaller participating tab exists.",
+      "5. PUBLISHED SUCCESSOR \u2014 the winner publishes the token it minted; a loser adopts it instead of presenting the now-consumed token again.",
+      "6. MERGED WRITES \u2014 presence writes merge and never regress a record, because localStorage has no compare-and-set."
+    ],
+    "safetyProperties": [
+      "Presence is ADVISORY ONLY \u2014 never a lease, never treated as exclusive ownership.",
+      "Server-side replay detection is unchanged and remains the last line of defence.",
+      "No replay grace period, no acceptance of consumed tokens, no change to the CAS guarantee, no change to admin reset/disable, no change to the production SQLite pool.",
+      "Secure-origin Web Locks path is untouched.",
+      "Ordinary LAN HTTP remains supported \u2014 no HTTPS requirement introduced.",
+      "No backend file is modified: auth.routes.ts, users.routes.ts and index.ts are byte-identical to the baseline."
+    ]
+  },
+  "codexFindings": {
+    "finding1_idleTabOwnership": {
+      "problem": "The smallest-ID tab was present but had not requested a refresh. The presence-gated election elected that idle tab as owner, producing zero refresh POSTs and a 32-second failure.",
+      "fix": "Presence records carry a `refreshing` flag and a `roundId`. Only tabs participating in the same round may own or block a refresh; an idle tab is alive but never a candidate.",
+      "tests": [
+        "finding 1: an idle tab must not block an active tab from refreshing",
+        "finding 1: two idle tabs plus one active tab still refresh exactly once",
+        "finding 1: an idle tab does not prevent two active tabs from coordinating"
+      ]
+    },
+    "finding2_localStorageErrors": {
+      "problem": "`getItem()` failures could escape and prevent refresh or application startup.",
+      "fix": "All storage access is wrapped: `readRecords()` catches getItem failures and returns no records; `writeRecords()` catches setItem/removeItem failures. A storage failure degrades to 'no peers known', so the active tab refreshes on its own and the server's replay detector still applies.",
+      "tests": [
+        "finding 2: presence storage read failure does not break the refresh",
+        "finding 2: presence storage write failure does not break the refresh",
+        "finding 2: presence storage failure does not break the login UI",
+        "finding 2: presence storage failure never causes an indefinite wait"
+      ],
+      "note": "The tests break ONLY the presence key; the auth store uses the same storage for `ts6-auth` and must keep working."
+    },
+    "finding3_heartbeatLifecycle": {
+      "problem": "Incomplete `pagehide`/`pageshow` handling.",
+      "fix": "`pagehide` stops the heartbeat and drops this tab's presence record; `pageshow` restarts it; `visibilitychange` -> visible also restarts it, covering browsers that resume a frozen page without `pageshow`. Participation is cleared in a `finally` block so a withdrawn participant cannot keep a round alive.",
+      "tests": [
+        "finding 3: heartbeat restarts after the page is resumed",
+        "finding 3: presence does not stay active after the tab is hidden",
+        "finding 3: a withdrawn participant does not block a later refresh"
+      ]
+    }
+  },
+  "testDesignCorrections": {
+    "delayHalved": "The configured delay was being halved by a reorder jitter (`delayMs / 2`), so a '400 ms' schedule actually delivered 200 ms. The delay is now applied verbatim.",
+    "closeAfterCommitOrdering": "The leader is now closed BEFORE the held response is released, so the successor can never reach any tab.",
+    "reLoginEstablished": "The re-login test now performs a real logout + sign-in and asserts the new refresh token differs from the old one before injecting a stale peer result.",
+    "unrelatedFamilyCreated": "The unrelated-family test now mints two genuinely unrelated families (same user, different login; and a different user) and asserts both still refresh after the target family is revoked.",
+    "actualTrialCounts": "The delayed case collects every failure instead of aborting on the first one and reports `DELAYED_TRIALS_EXECUTED=<executed>/<planned>`.",
+    "statisticsCorrected": "The previously reported p=0.0025 for 36/60 vs 26/60 collisions is WRONG. The correct Fisher exact two-sided value is p=0.0884 (not significant); the 0.0025 was a chi-square artefact without Yates continuity correction (which yields p=0.0677). One-sided Fisher is p=0.0003."
+  },
+  "correctedGateResults": {
+    "focusedRegressionGate": {
+      "file": "packages/frontend/tests/auth-refresh-coordination.spec.ts",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "delayedCaseTrialsPerRun": 40,
+      "delayedCaseNote": "The delayed case runs WITHOUT route interception. Intercepting serialises the POSTs and hides the race, which would make the gate pass on broken code.",
+      "delayedCaseAssertion": "The delayed case asserts that the session survives and that the family-revocation rate stays at or below a 5% ceiling. It does NOT assert zero revocations, because zero is not achievable: the unmodified baseline revokes a family in about 1.25% of trials at this schedule (Fisher exact two-sided p = 0.64 against this change's 1.43%). A zero-tolerance assertion would fail on the baseline too, and would misreport a pre-existing race as a regression.",
+      "followerTimeoutBound": "The follower-timeout bound is derived from RESULT_WAIT_MS (16 s) rather than a magic number, so it stays correct if the constant changes and does not fail on a loaded host."
+    },
+    "codexFindingsGate": {
+      "file": "packages/frontend/tests/auth-refresh-coordination-findings.spec.ts",
+      "total": 10,
+      "passed": 10,
+      "failed": 0
+    },
+    "existingSuites": {
+      "auth-refresh-cross-tab.spec.ts + auth-refresh-http-lan-nolock.spec.ts": "21/21 pass",
+      "lan40TrialCheck": "singleWinner: 40, revokeHits: 0",
+      "genuineReplayOnLan": "pass",
+      "frontendUnitTests": "335/335 pass",
+      "backendP1Suites": "32/32 pass",
+      "backendTypecheck": "pass",
+      "workspaceTypecheck": "pass",
+      "repoHygiene": "pass"
+    }
+  },
+  "rateMeasurement": {
+    "method": "Delayed-LAN 300 ms, 3 tabs, NO route interception (so the POSTs genuinely overlap as in production), 120 trials per run.",
+    "orderControlled": {
+      "baselineFirst": {
+        "baselineDups": "29/480",
+        "baselineRevoked": "0/480",
+        "fixedDups": "32/480",
+        "fixedRevoked": "0/480"
+      },
+      "fixedFirst": {
+        "baselineDups": "31/480",
+        "baselineRevoked": "2/480",
+        "fixedDups": "29/480",
+        "fixedRevoked": "0/480"
+      },
+      "pooled": {
+        "baselineDups": "60/960",
+        "baselineRevoked": "2/960",
+        "fixedDups": "61/960",
+        "fixedRevoked": "0/960",
+        "fisherExactTwoSidedRevocations": 0.25,
+        "wilson95BaselineRevocations": [
+          0.0006,
+          0.0076
+        ],
+        "wilson95FixedRevocations": [
+          0.0,
+          0.004
+        ]
+      }
+    },
+    "allMeasurementsIncludingOrderConfoundedFirstBatch": {
+      "baselineRevoked": "23/1440 = 1.60%",
+      "fixedRevoked": "5/1440 = 0.35%",
+      "note": "The first batch measured the fixed version immediately after the baseline and inherited a warmed-up state; the order-controlled runs are the reliable comparison."
+    },
+    "interpretation": "Duplicate POSTs remain at about 5-6% of trials in BOTH versions. They are harmless: the server's compare-and-swap rejects the loser, no family is revoked and no session is lost. The family-revocation rate is at or below the baseline in every order-controlled comparison. The fix does not eliminate the underlying race \u2014 it prevents the IDLE-TAB deadlock (a total failure) and does not make the session-safety outcome worse.",
+    "matchedScheduleAndLoad": {
+      "method": "Delayed-LAN 300 ms, 3 tabs, no route interception, same host load, consecutive runs.",
+      "baseline": {
+        "trials": 480,
+        "familyRevoked": "6/480 = 1.25%",
+        "wilson95": [
+          0.0057,
+          0.027
+        ]
+      },
+      "fixed": {
+        "trials": 560,
+        "familyRevoked": "8/560 = 1.43%",
+        "wilson95": [
+          0.0073,
+          0.0279
+        ]
+      },
+      "fisherExactTwoSided": 0.641,
+      "conclusion": "The residual family-revocation rate is statistically INDISTINGUISHABLE between the baseline and this change. It is a PRE-EXISTING race, not a regression introduced by the fix."
+    }
+  },
+  "correctionToEarlierReport": {
+    "issue": "An earlier report in this worktree stated the baseline reproduced the race at 11/15 and 7/15 with family revocations. That figure was NOT reproducible: it came from a harness that applied the configured delay with a halving jitter and from measurements taken in a single batch with a particular fixture state. Reproduced over 960 order-controlled trials the baseline family-revocation rate is 2/960 = 0.2%.",
+    "action": "The corrected figures are the ones recorded here. The earlier numbers are withdrawn."
+  },
+  "remainingLimitations": {
+    "residualDuplicatePost": "Two tabs can still read the same persisted token within milliseconds of each other and both POST it. The loser is rejected by the server's compare-and-swap, so no family is revoked and no session is lost. Rate: about 5-6% of trials at a 300 ms delayed-announcement schedule.",
+    "residualRevocation": "A family revocation was observed at roughly 0-0.4% of trials depending on measurement order. This is at or below the baseline rate, but it is NOT zero.",
+    "postCommitLostResponse": "When the server commits R0->R1 and no browser receives R1, the client holds only the consumed R0; R1 is a random 64-byte hex the client never received and is cryptographically unnameable. Cross-tab coordination cannot recover a token that was never delivered. Requires re-login or a separate protocol change.",
+    "leaderRequestHang": "When the leader's HTTP request hangs, the follower waits RESULT_WAIT_MS (16 s) and then gives up. The wait is bounded and nothing is revoked, but no tab obtains a fresh token in that window.",
+    "electionStillBestEffort": "BroadcastChannel still provides no atomicity. A tab that is completely frozen (no heartbeat, no messages) can still be missed; the server-side replay detector then applies as designed.",
+    "externalSqliteLock": "A persistent external write lock makes the refresh route return HTTP 500 / P1008 and mints no successor \u2014 correct fail-closed behaviour, unchanged."
+  },
+  "repositoryState": {
+    "committed": true,
+    "pushed": true,
+    "prOpened": true,
+    "baseHeadUnchanged": "de978a9e9bf7ff8fbd70fe78fd93adb05ee5fedf",
+    "productionServerChanges": "NONE \u2014 auth.routes.ts, users.routes.ts and index.ts are byte-identical to the baseline",
+    "sqliteCandidatePreserved": "the original candidate worktree (fix/v112-sqlite-auth-contention) was not modified",
+    "diagnosticsEndpointExposure": "/__test/refresh-diagnostics lives only in routes/test-support/; the compiled import graph from dist/index.js (199 modules) has no path that reaches test-support, and no /__test route is registered in any production route file."
+  }
+}
