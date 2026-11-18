@@ -79,4 +79,20 @@ describe('radio local hosts reach every radio start', () => {
       assert.deepEqual(await opened[0].hosts, []);
     }
   });
+
+  it('never gives ordinary stream items the operator radio LAN allowance', async () => {
+    for (const source of ['url', 'youtube', 'local'] as const) {
+      let loadCalls = 0;
+      const { bot, opened, icy } = makeBot(async () => {
+        loadCalls++;
+        return ['192.168.1.20'];
+      });
+      const ordinaryStream = { ...LAN_STATION, id: `ordinary-${source}`, source };
+      await assert.rejects(bot.playStream(ordinaryStream), /no network/);
+      assert.equal(opened.length, 1);
+      assert.deepEqual(await opened[0].hosts, [], `${source} must use strict public-address validation`);
+      assert.deepEqual(await icy[0], [], `${source} ICY metadata must use the same strict rule`);
+      assert.equal(loadCalls, 0, `${source} must not consult the radio allowlist`);
+    }
+  });
 });
