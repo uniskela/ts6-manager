@@ -141,6 +141,12 @@ export interface MusicStartOptions {
   replaceSessionIds?: string[];
   /** Internal fallback playback ownership; never accepted from an API request. */
   automation?: () => boolean;
+  /**
+   * Admin-approved LAN hosts this radio station may use. Set only by the
+   * caller that loaded the operator's radio allowlist (the admin-configured
+   * station list); never from a request body or a URL a user typed.
+   */
+  localHosts?: string[];
 }
 
 /** One log record for a viewer-controlled signaling error. */
@@ -782,21 +788,21 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Start polling ICY metadata for a radio stream. */
-  private startIcyPolling(streamUrl: string): void {
+  private startIcyPolling(streamUrl: string, localHosts?: readonly string[]): void {
     this.stopIcyPolling();
     this.lastStreamTitle = '';
 
     // Immediate first fetch
-    this.fetchAndUpdateIcy(streamUrl);
+    this.fetchAndUpdateIcy(streamUrl, localHosts);
 
     this.icyPollTimer = setInterval(() => {
-      this.fetchAndUpdateIcy(streamUrl);
+      this.fetchAndUpdateIcy(streamUrl, localHosts);
     }, 15000);
   }
 
-  private async fetchAndUpdateIcy(streamUrl: string): Promise<void> {
+  private async fetchAndUpdateIcy(streamUrl: string, localHosts?: readonly string[]): Promise<void> {
     try {
-      const title = await fetchIcyMetadata(streamUrl);
+      const title = await fetchIcyMetadata(streamUrl, 10000, localHosts);
       if (!title || title === this.lastStreamTitle || !this._nowPlaying) return;
       this.lastStreamTitle = title;
 
@@ -1227,6 +1233,9 @@ export class VoiceBot extends EventEmitter {
     }
     if (options.automation && !options.automation()) return [];
     if (!options.automation) this.automation?.requestQueued();
+    // Operator-approved LAN hosts for admin-configured radio stations. The
+    // caller loaded them; they never come from a URL a user typed.
+    const localHosts = options.localHosts ?? [];
     const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
@@ -1247,10 +1256,10 @@ export class VoiceBot extends EventEmitter {
     this.emit('statusChange', this._status);
     this.emit('nowPlaying', item);
     this.updateNowPlayingNickname(item.title);
-    this.startIcyPolling(item.streamUrl);
+    this.startIcyPolling(item.streamUrl, localHosts);
 
     try {
-      const stream = await this.pipeline.toPcmStream(item.streamUrl);
+      const stream = await this.pipeline.toPcmStream(item.streamUrl, localHosts);
       if (!current()) {
         stream.kill();
         return replaced;

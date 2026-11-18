@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
-import { validateUrl } from "../../utils/url-validator.js";
+import { validateUrl, parseLocalHostAllowlist, type LocalHostAllowlist } from "../../utils/url-validator.js";
 import { acquireMediaEgress, egressEnvironment, mediaEgressEnabled } from "../egress/media-egress.js";
 
 export const SAMPLE_RATE = 48000;
@@ -150,10 +150,16 @@ export class AudioPipeline {
   /**
    * Stream audio from a URL to raw PCM (for live radio streams).
    * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
+   *
+   * `localHosts` carries the operator-approved LAN hosts for radio stations
+   * the admin configured. It is never set from a URL a user typed.
    */
-  async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+  async toPcmStream(url: string, localHosts?: readonly string[]): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
     // C4: Validate URL before passing to ffmpeg
-    const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
+    const localAllowlist: LocalHostAllowlist | undefined = localHosts?.length
+      ? parseLocalHostAllowlist(localHosts).allowlist
+      : undefined;
+    const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'], localAllowlist });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }

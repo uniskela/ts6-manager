@@ -41,6 +41,8 @@ import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
 import { toastMediaStarted } from '@/lib/media-start-toast';
 import { splitGenreTags } from '@/lib/radio-moods';
+import { RadioLocalHostsDialog, RadioLocalHostsTrigger } from '@/components/radio/RadioLocalHostsDialog';
+import { useAuthStore } from '@/stores/auth.store';
 import type { MusicBotSummary, RadioStationInfo, RadioPreset, RadioBrowserStationInfo } from '@ts6/common';
 
 
@@ -85,6 +87,8 @@ export function RadioTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [showBrowse, setShowBrowse] = useState(false);
+  const [showLocalHosts, setShowLocalHosts] = useState(false);
+  const isAdmin = useAuthStore((state) => state.isAdmin());
   const [browseQuery, setBrowseQuery] = useState('');
   const [browseResults, setBrowseResults] = useState<RadioBrowserStationInfo[]>([]);
   const [browseSearchState, setBrowseSearchState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
@@ -250,6 +254,7 @@ export function RadioTab() {
         <Button variant="outline" size="sm" onClick={() => setShowPresets(true)}>
           <Radio className="h-4 w-4 mr-1" /> Presets
         </Button>
+        {isAdmin && <RadioLocalHostsTrigger onClick={() => setShowLocalHosts(true)} />}
         <Button size="sm" onClick={() => {
           setEditingStation(null);
           setAddForm({ name: '', url: '', genre: '' });
@@ -351,6 +356,10 @@ export function RadioTab() {
             <div>
               <Label htmlFor="radio-station-url" className="text-xs">Stream URL</Label>
               <Input id="radio-station-url" disabled={stationPending} value={addForm.url} onChange={(e) => setAddForm({ ...addForm, url: e.target.value })} placeholder="https://stream.example.com/live" />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                A station on your local network is blocked until you allow its host under{' '}
+                <span className="font-medium text-foreground">Local hosts</span>.
+              </p>
             </div>
             <div>
               <Label htmlFor="radio-station-genre" className="text-xs">Mood or genre</Label>
@@ -501,6 +510,11 @@ export function RadioTab() {
         }}
         destructive
       />
+
+      {/* LAN hosts allowed for radio stations (administrators only) */}
+      {isAdmin && (
+        <RadioLocalHostsDialog open={showLocalHosts} onOpenChange={setShowLocalHosts} />
+      )}
     </div>
   );
 }

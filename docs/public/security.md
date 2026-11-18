@@ -29,7 +29,7 @@ The `!remote` chat command gives a listener in a media bot's channel a private, 
 
 ## Outbound requests
 
-HTTP automation actions and FFmpeg/media URL paths include SSRF protections; media downloads are also checked at connection time (see [Media downloads](#media-downloads)). An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog; that list is IPTV-only ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
+HTTP automation actions and FFmpeg/media URL paths include SSRF protections; media downloads are also checked at connection time (see [Media downloads](#media-downloads)). An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog, and specific LAN radio hosts from the radio tab's **Local hosts** dialog; each list covers only its own source type ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network), [Media bots](music-bots.md#radio-stations-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
 
 Do not design deployments or automations around bypassing these checks.
 
@@ -47,6 +47,16 @@ yt-dlp handles media links for music, video, library downloads, playlist imports
 If the proxy cannot start, downloads fail instead of connecting directly.
 
 Video that yt-dlp resolves for direct streaming (YouTube direct playback, Twitch) is played by the media sidecar. The sidecar connects through its own checking proxy (`SIDECAR_EGRESS_PROXY`). Before handing a URL over, the backend checks its address and limits it to ports 80 and 443. Redirects and playlist segments that the sidecar's ffmpeg then follows are checked by the sidecar's proxy under its own rules. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
+
+### Radio stations
+
+Radio stations are operator-configured sources, and the backend's own ffmpeg opens them directly — they do **not** go through the media egress proxy. `MEDIA_EGRESS_PROXY=off` therefore has no effect on radio. The address is checked before the stream opens, and again for the ICY metadata request:
+
+- a station on a public address is opened as configured;
+- a station on a private or shared address (for example a home server at `192.168.1.20`) is refused with `Private/reserved IP addresses are blocked`, unless an administrator allowed that host in the radio tab's **Local hosts** dialog;
+- loopback, link-local and cloud metadata addresses are refused for every station, with or without an allowance.
+
+The allowance covers admin-configured stations only. A URL a user typed or pasted — a `!play` link, a listener-remote link, a Bot Flow HTTP request — keeps the strict rule and stays refused.
 
 **What this does not cover.** The proxy controls traffic that yt-dlp and ffmpeg send through it. It is not an operating-system boundary: a downloader that ignored its proxy settings, through a bug or a future change, would not be stopped by it. The proxy also cannot recognise a NAT64 prefix that a network operator chose instead of the standard `64:ff9b::/96`. This applies to every deployment today, including the split Docker stack, the all-in-one image and a backend run outside Docker. Running downloads in a separate container with no route except the proxy is planned for the split stack ([#476](https://github.com/uniskela/ts6-manager/issues/476)). The all-in-one image and native installs will continue to rely on the proxy alone.
 

@@ -26,6 +26,9 @@ import {
   IPTV_LOCAL_HOSTS_KEY,
   loadIptvLocalHosts,
   parseIptvLocalHostsUpdate,
+  RADIO_LOCAL_HOSTS_KEY,
+  loadRadioLocalHosts,
+  parseRadioLocalHostsUpdate,
   PUBLIC_URL_KEY,
   loadPublicUrl,
   parsePublicUrl,
@@ -318,8 +321,38 @@ settingsRoutes.put('/iptv-network', requireAdmin, async (req: Request, res: Resp
   } catch (err) { next(err); }
 });
 
-async function publicUrlSettings(prisma: any): Promise<PublicUrlSettings> {
-  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
+// GET /api/settings/radio-network — LAN hosts allowed for admin-configured radio stations.
+settingsRoutes.get('/radio-network', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    res.json({ allowedLocalHosts: await loadRadioLocalHosts(req.app.locals.prisma) });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/radio-network — replace the allowed local radio hosts.
+settingsRoutes.put('/radio-network', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const parsed = parseRadioLocalHostsUpdate(req.body);
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+    const value = JSON.stringify(parsed.value);
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.radio_network_update',
+        target: { type: 'settings', id: 'radio-network' },
+      },
+      (tx) => tx.appSetting.upsert({
+        where: { key: RADIO_LOCAL_HOSTS_KEY },
+        create: { key: RADIO_LOCAL_HOSTS_KEY, value },
+        update: { value },
+      }),
+    );
+    res.json({ allowedLocalHosts: parsed.value });
+  } catch (err) { next(err); }
+});
+
+async function publicUrlSettings(prisma: any): Promise<PublicUrlSettings> {  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
   const saved = parsePublicUrl(row?.value);
   const { publicUrl: effective, source } = await loadPublicUrl(prisma);
   return { publicUrl: saved.ok ? saved.value : null, effective, source };

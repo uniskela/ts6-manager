@@ -50,6 +50,7 @@ Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) an
 - Live versus on-demand source mode, with encode-health warnings when encoding stays below realtime.
 - No-viewer auto-stop (default 5 minutes; the browser preview does not count as a viewer).
 - **IPTV header → Local hosts** (administrators only) is an allowlist for LAN IPTV proxies (Threadfin, xTeVe, TVHeadend, and similar). It applies only to playlist refresh, IPTV-page starts, and `!tv`. When the egress proxy is enabled, the sidecar checks every ffmpeg hop against that list.
+- **Radio stations → Local hosts** (administrators only) is the matching allowlist for LAN radio stations. It applies only to stations an administrator configured, and never to a link a user typed. See [Media bots — Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network).
 - Stream start reports a TeamSpeak refusal immediately, holds chat on antiflood error 524, and the sidecar keeps early ICE candidates until the viewer answers.
 - [#204](https://github.com/uniskela/ts6-manager/pull/204) fixes Twitch live URL resolution and browser-preview ICE, with reverse-proxy notes.
 - [#209](https://github.com/uniskela/ts6-manager/pull/209) renames the UI to Media Bots at `/media-bots` (`/music-bots` redirects) and adds encode profiles **Performance / Balanced / Quality**. Profile detail is in [Video streaming — Quality](video-streaming.md#quality).

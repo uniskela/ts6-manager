@@ -1,4 +1,4 @@
-import { parseLocalHostAllowlist } from './url-validator.js';
+import { parseLocalHostAllowlist, type LocalHostAllowlist } from './url-validator.js';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { VideoEncodeProfile, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
 import { DEFAULT_AUTO_MAX_PRESET, isPresetKey } from '../voice/streaming/types.js';
@@ -326,6 +326,79 @@ export function parseIptvLocalHostsUpdate(body: Record<string, unknown> | null |
   const entries = [...new Set((raw as string[]).map((v) => v.trim().toLowerCase()).filter(Boolean))];
   if (entries.length > MAX_IPTV_LOCAL_HOSTS) {
     return { ok: false, error: `At most ${MAX_IPTV_LOCAL_HOSTS} hosts` };
+  }
+  if (entries.some((e) => e.length > 255)) {
+    return { ok: false, error: 'Host entries are limited to 255 characters' };
+  }
+  const { invalid } = parseLocalHostAllowlist(entries);
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      error: `Not allowed: ${invalid.join(', ')}. Use a LAN IP (192.168.1.20), a range (192.168.1.0/24) or a hostname; `
+        + 'loopback, link-local and cloud metadata addresses stay blocked.',
+    };
+  }
+  return { ok: true, value: entries };
+}
+
+// --- Radio stations on the local network ---------------------------------------
+
+export const RADIO_LOCAL_HOSTS_KEY = 'radio_allowed_local_hosts';
+export const MAX_RADIO_LOCAL_HOSTS = 32;
+
+/**
+ * Operator-approved LAN hosts for radio stations (IPs, CIDRs or hostnames).
+ * Radio stations are admin-configured sources, so they get their own list —
+ * the IPTV list stays IPTV-only. Invalid stored entries are dropped rather
+ * than trusted.
+ */
+export async function loadRadioLocalHosts(prisma: PrismaClient): Promise<string[]> {
+  const row = await prisma.appSetting.findUnique({ where: { key: RADIO_LOCAL_HOSTS_KEY } });
+  if (!row?.value) return [];
+  try {
+    const value: unknown = JSON.parse(row.value);
+    if (!Array.isArray(value)) return [];
+    const entries = value.filter((v): v is string => typeof v === 'string');
+    const { invalid } = parseLocalHostAllowlist(entries);
+    return entries.filter((e) => !invalid.includes(e)).slice(0, MAX_RADIO_LOCAL_HOSTS);
+  } catch {
+    return [];
+  }
+}
+
+export type RadioLocalHostsUpdate = { ok: true; value: string[] } | { ok: false; error: string };
+
+/**
+ * The operator-approved LAN hosts for radio stations, as an allowlist. Returns
+ * undefined when nothing is allowed, so callers pass the strict rule.
+ */
+export async function radioLocalAllowlist(prisma: PrismaClient): Promise<LocalHostAllowlist | undefined> {
+  const hosts = await radioLocalHosts(prisma);
+  if (!hosts.length) return undefined;
+  return parseLocalHostAllowlist(hosts).allowlist;
+}
+
+/**
+ * The operator-approved LAN hosts for radio stations, as a plain list. An
+ * empty list means no LAN station is allowed. A settings store that cannot
+ * be read reads as an empty list, so the strict rule still applies.
+ */
+export async function radioLocalHosts(prisma: PrismaClient): Promise<string[]> {
+  try {
+    return await loadRadioLocalHosts(prisma);
+  } catch {
+    return [];
+  }
+}
+
+export function parseRadioLocalHostsUpdate(body: Record<string, unknown> | null | undefined): RadioLocalHostsUpdate {
+  const raw = body?.allowedLocalHosts;
+  if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string')) {
+    return { ok: false, error: 'allowedLocalHosts must be a list of hosts' };
+  }
+  const entries = [...new Set((raw as string[]).map((v) => v.trim().toLowerCase()).filter(Boolean))];
+  if (entries.length > MAX_RADIO_LOCAL_HOSTS) {
+    return { ok: false, error: `At most ${MAX_RADIO_LOCAL_HOSTS} hosts` };
   }
   if (entries.some((e) => e.length > 255)) {
     return { ok: false, error: 'Host entries are limited to 255 characters' };
