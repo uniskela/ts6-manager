@@ -256,7 +256,10 @@ const commandServerFixtures = [
 async function mockChatCommandApis(page: import('@playwright/test').Page, initialName = 'rules') {
   let commands = [{ id: 1, name: initialName, response: 'Be kind', description: 'Server rules', enabled: true }];
   const requestedConfigIds: number[] = [];
-  let permissions = { playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' } };
+  let permissions = {
+    playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
+  };
   const presets = [
     { name: 'rules', description: 'Server rules', response: 'Be kind' },
     { name: 'links', description: 'Useful links', response: 'https://example.test' },
@@ -364,6 +367,7 @@ test('built-in permissions save several TS groups and allow removing unavailable
   let policy = {
     playback: { mode: 'everyone' }, queue: { mode: 'everyone' },
     video: { mode: 'server_groups', serverGroupIds: [99] },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
   };
   const saved: unknown[] = [];
   await page.route('**/api/servers/1/chat-commands/permissions/1', async (route) => {
@@ -379,6 +383,12 @@ test('built-in permissions save several TS groups and allow removing unavailable
   await page.goto('/bots?tab=commands');
   const playback = page.getByRole('group', { name: 'Playback and music controls' });
   await expect(playback.getByRole('combobox')).toContainText('Everyone');
+  const playlistBypass = page.getByRole('group', { name: 'Queue playlists without a vote' });
+  await expect(playlistBypass.getByText('Selected TeamSpeak server groups only')).toBeVisible();
+  await expect(playlistBypass.getByText(/No selected groups denies these controls to everyone/)).toBeVisible();
+  await expect(playlistBypass.getByRole('combobox')).toHaveCount(0);
+  await expect(playlistBypass.getByRole('checkbox', { name: /DJ/ })).not.toBeChecked();
+  await playlistBypass.getByRole('checkbox', { name: /DJ/ }).check();
   await playback.getByRole('combobox').click();
   await page.getByRole('option', { name: 'Selected TeamSpeak server groups' }).click();
   await playback.getByRole('checkbox', { name: /DJ/ }).check();
@@ -391,11 +401,13 @@ test('built-in permissions save several TS groups and allow removing unavailable
   await expect.poll(() => saved).toEqual([{
     playback: { mode: 'server_groups', serverGroupIds: [6, 12] },
     queue: { mode: 'everyone' }, video: { mode: 'server_groups', serverGroupIds: [] },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [6] },
   }]);
   await expect(page.getByRole('button', { name: 'Save permissions' })).toBeDisabled();
   await page.reload();
   await expect(playback.getByRole('checkbox', { name: /DJ/ })).toBeChecked();
   await expect(playback.getByRole('checkbox', { name: /Moderator/ })).toBeChecked();
+  await expect(playlistBypass.getByRole('checkbox', { name: /DJ/ })).toBeChecked();
 });
 
 test('clash warnings update for custom replies, built-ins, and flow command triggers', async ({ page, request }) => {
