@@ -25,6 +25,7 @@ import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 import { startMediaEgress } from './voice/egress/media-egress.js';
 import { runInOrderWithin } from './utils/ordered-shutdown.js';
+import { sqliteDatasourceUrl } from './utils/sqlite-datasource.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -64,7 +65,11 @@ async function main() {
   // Non-blocking diagnostic only. Production images never self-update bundled tools.
   logYtDlpVersionInBackground();
 
-  const prisma = new PrismaClient();
+  // SQLite serialises writers on the database file, so a large Prisma pool
+  // only adds contention. A bounded pool keeps administrative writes (disable
+  // account, reset password) from timing out under ordinary authentication
+  // traffic. The operator can still override the size in DATABASE_URL.
+  const prisma = new PrismaClient({ datasourceUrl: sqliteDatasourceUrl(config.databaseUrl) });
   const app = createApp();
   const server = createServer(app);
 

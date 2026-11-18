@@ -8,7 +8,7 @@
 | `ENCRYPTION_KEY` | — | Required production key for encrypted stored credentials |
 | `PORT` | `3001` | Backend HTTP port |
 | `BACKEND_BIND_IP` | `127.0.0.1` (compose) | Host address the split stack's compose file publishes backend port 3001 on (compose only; not a backend env). The web interface does not need it. Set a LAN address or `0.0.0.0` only if another machine calls the API directly; see [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits). |
-| `DATABASE_URL` | `file:./data/ts6webui.db` | Prisma SQLite database path |
+| `DATABASE_URL` | `file:./data/ts6webui.db` | Prisma SQLite database path. The SQLite connection pool defaults to **2 connections**; add `?connection_limit=N` to the URL to choose a different size (an explicit limit is always respected). A smaller pool reduces write contention, which is what makes administrative account disables and password resets reliable under authentication load. Other query parameters in the URL are preserved. Not applicable to non-SQLite databases |
 | `MUSIC_REQUEST_HISTORY_LIMIT` | `100` | Recent unique requests retained per bot and connection (positive integer, capped at 1,000). Oldest rows are removed when a request is recorded; legacy server-wide rows are trimmed when history is read |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access-token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh-token lifetime |
