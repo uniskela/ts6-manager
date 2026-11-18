@@ -27,6 +27,8 @@ This section covers upgrading from 1.11.4 (or later 1.11.x) to **1.12.0**. Skip 
 
 **Back up the database before starting the 1.12.0 backend.** Stop the backend, then copy its persistent data volume (`ts6webui.db`, journal/WAL files, uploaded IPTV playlists, bot avatars, hosted channel banners) and keep the previous image tag until the upgrade is verified.
 
+For the rollback procedure, the backup must be a stopped-volume archive and must be restored into a **new empty volume**. Do not restore a database file into the volume that the 1.12.0 backend used: the 1.12.0 schema is still in that volume and can be mistaken for the old backup. The exact commands are under [Rolling back from 1.12.0 to 1.11.4](#rolling-back-from-1120-to-1114).
+
 After upgrading:
 
 - Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting). TeamSpeak chat controls such as `!playlistvote` remain part of this release where already on `main`.
@@ -35,6 +37,91 @@ After upgrading:
 - Other behaviour may differ from 1.11.x where this release intentionally adds or fixes features (for example bot volume persistence, Listener Remote acknowledgements, and search/duration rules). Read the 1.12.0 release notes for the full list.
 
 Rolling back needs the previous image tag and the matching database backup.
+
+#### Rolling back from 1.12.0 to 1.11.4
+
+1.12.0 adds the `Playlist.remoteAccess` column. The 1.11.4 image cannot safely reconcile a database that already contains that column because Prisma refuses to drop it while it holds data. Therefore, roll back by restoring the **pre-upgrade** database into a **new empty volume**; do not point the old image at the upgraded volume and do not use `prisma db push --accept-data-loss`.
+
+Use the same `JWT_SECRET`, `ENCRYPTION_KEY` and `SIDECAR_SECRET` as before the upgrade. The examples below use Docker Compose with the stock `backend-data` volume. Adjust the project and volume names to match the installation.
+
+**1. Stop every service that can open the database.** This prevents SQLite journal/WAL files from changing while the backup is copied:
+
+~~~bash
+docker compose stop
+~~~
+
+**2. Identify the backend volume and confirm the database path.** The stock split image stores SQLite at `/app/packages/backend/data/ts6webui.db` inside the backend data volume. Record the volume name shown by `docker compose config` or `docker volume ls`.
+
+**3. Archive the complete stopped backend data volume.** Include `ts6webui.db`, any `-wal` / `-shm` / journal companion files, `.schema-version`, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the archive and its checksum outside the backend volume:
+
+~~~bash
+docker volume ls
+docker run --rm \
+  -v <your-project>_backend-data:/data:ro \
+  -v "${PWD}:/backup" \
+  alpine sh -c 'cd /data && tar czf /backup/ts6-backend-data-v1.11.4.tgz .'
+sha256sum ts6-backend-data-v1.11.4.tgz > ts6-backend-data-v1.11.4.tgz.sha256
+~~~
+
+Do not skip the checksum: it proves that the archive restored later is the same stopped-volume archive.
+
+**4. Upgrade to 1.12.0 with the normal Compose files**, then verify the upgrade before continuing. Keep the old image tag and the archive from step 3.
+
+**5. Before rolling back, stop the 1.12.0 services again** so no process has the upgraded database open:
+
+~~~bash
+docker compose stop
+~~~
+
+**6. Create a new empty backend volume and restore the archive into it.** Do not extract the archive over the upgraded volume: that can leave the upgraded database or WAL/journal files in place.
+
+~~~bash
+docker volume create <your-project>_backend-data-rollback
+docker run --rm \
+  -v <your-project>_backend-data-rollback:/restore \
+  -v "${PWD}:/backup:ro" \
+  alpine sh -c 'cd /restore && tar xzf /backup/ts6-backend-data-v1.11.4.tgz && sha256sum -c /backup/ts6-backend-data-v1.11.4.tgz.sha256'
+~~~
+
+The checksum command must report `OK` before the old image is started. The restored volume must contain the archive's `.schema-version` and `ts6webui.db`; it must not contain an upgraded database or upgraded WAL/journal companion.
+
+**7. Point the old Compose configuration at the new rollback volume.** In the Compose file, change the backend data mount to the rollback volume while keeping the music volume and all secrets unchanged:
+
+~~~yaml
+volumes:
+  - backend-data-rollback:/app/packages/backend/data
+  - music-data:/data/music
+
+volumes:
+  backend-data-rollback:
+    name: <your-project>_backend-data-rollback
+  music-data:
+    name: <your-project>_music-data
+~~~
+
+If the deployment uses an externally managed volume, update that volume mapping instead. Confirm the effective mount before starting:
+
+~~~bash
+docker compose config
+docker compose run --rm --no-deps --entrypoint sh backend -c '
+  echo "DATABASE_URL=$DATABASE_URL"
+  ls -la data
+  cat data/.schema-version
+'
+~~~
+
+For a 1.11.4 backup, `.schema-version` must be `2026.10.10-music-request-history`. The `Playlist` table must not contain `remoteAccess`. A read-only check can be made with any SQLite-capable image; the important checks are that the old marker is present and the new column is absent.
+
+**8. Restore the old image tag and start the stack.** The 1.11.4 startup must log `mode=reconcile`, report that the database is already in sync, and record the 1.11.4 schema version. Do not add `--accept-data-loss`, run an ad-hoc `ALTER TABLE`, or let the old image reconcile the upgraded database.
+
+~~~bash
+docker compose up -d
+docker compose logs backend
+~~~
+
+**9. Verify the rollback.** Sign in with the pre-upgrade admin account, confirm saved playlists and connections are present, and start the music bot to confirm the TeamSpeak service reconnects. Only after those checks should the upgraded backend volume be removed. Keep both backups until the rollback is accepted.
+
+This procedure was validated on 18 November 2026 with disposable Docker volumes: a v1.11.4 database was archived while stopped, upgraded to the v1.12.0 candidate, restored into a new empty volume, inspected before startup, and then started successfully on v1.11.4 without data-loss flags or manual schema changes.
 
 ### Upgrading to 1.10.0
 
