@@ -42,12 +42,13 @@ export const BUILTIN_CHAT_COMMANDS = [
 
 export type BuiltinChatCommand = (typeof BUILTIN_CHAT_COMMANDS)[number];
 
-export const MEDIA_COMMAND_GROUPS = ['playback', 'queue', 'video'] as const;
+export const MEDIA_COMMAND_GROUPS = ['playback', 'queue', 'video', 'playlistBypass'] as const;
 export type MediaCommandGroup = (typeof MEDIA_COMMAND_GROUPS)[number];
 export type MediaCommandAccess =
   | { mode: 'everyone' }
   | { mode: 'server_groups'; serverGroupIds: number[] };
-export type MediaCommandPermissions = Record<MediaCommandGroup, MediaCommandAccess>;
+export type MediaCommandPermissions = Record<Exclude<MediaCommandGroup, 'playlistBypass'>, MediaCommandAccess>
+  & { playlistBypass: { mode: 'server_groups'; serverGroupIds: number[] } };
 
 /** Exhaustive so new built-ins must explicitly choose an authorization group. */
 export const MEDIA_COMMAND_GROUP_BY_COMMAND = {

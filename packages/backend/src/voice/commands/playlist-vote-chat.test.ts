@@ -6,6 +6,7 @@ import { ListenerRemoteService } from '../listener-remote.js';
 import { bindPlaylistVoteLifecycle } from '../playlist-vote/lifecycle.js';
 import { PlaylistVoteRuntime } from '../playlist-vote/runtime.js';
 import { playlistVoteSettingsKey } from '../playlist-vote-settings.js';
+import { mediaCommandPermissionsKey } from '../media-command-permissions.js';
 import { MusicCommandHandler, resetChatReplyCooldownsForTests } from '../music-command-handler.js';
 
 const requester = 'req-uid';
@@ -20,6 +21,12 @@ async function fixture(opts: {
   bridge?: 'ok' | 'throw' | null;
   /** Include a third human so 2/3 yes stays open until deadline. */
   threeListeners?: boolean;
+  settingsEnabled?: boolean;
+  maxRequestSize?: number;
+  playlistAccess?: string;
+  bypassGroups?: number[];
+  queueGroups?: number[];
+  onlyRequester?: boolean;
 } = {}) {
   resetChatReplyCooldownsForTests();
   let now = 1_700_000_000_000;
@@ -27,16 +34,17 @@ async function fixture(opts: {
   const queue = new PlayQueue();
   const historyWrites: Array<{ create?: { url?: string } }> = [];
   const privateReplies: string[] = [];
+  const channelMessages: string[] = [];
   const playlist = {
     id: 1,
     name: 'P',
-    remoteAccess: 'request' as string,
+    remoteAccess: opts.playlistAccess ?? 'request',
     songs: [
       { song: { id: 100, title: 'A', artist: null, duration: 1, filePath: '/secret/100.mp3', source: 'local', sourceUrl: null } },
       { song: { id: 101, title: 'B', artist: null, duration: 1, filePath: '/secret/101.mp3', source: 'local', sourceUrl: null } },
     ],
   };
-  const electorate = opts.threeListeners ? [requester, peer, third] : [requester, peer];
+  const electorate = opts.onlyRequester ? [requester] : opts.threeListeners ? [requester, peer, third] : [requester, peer];
 
   const bot: any = {
     currentConfig: { id: 4, serverConfigId: 2, name: 'Music', password: 'x' },
@@ -48,6 +56,7 @@ async function fixture(opts: {
     floodHoldActive: false,
     noteIgnoredCommand: () => undefined,
     getCurrentChannelId: () => 8,
+    sendChannelMessage: (text: string) => { channelMessages.push(text); },
     sendTextMessage: (_clid: number, text: string) => { privateReplies.push(text); },
     play: async () => undefined,
   };
@@ -60,17 +69,26 @@ async function fixture(opts: {
           return {
             value: JSON.stringify({
               ...DEFAULT_PLAYLIST_VOTE_SETTINGS,
-              enabled: true,
+              enabled: opts.settingsEnabled ?? true,
               thresholdPercent: 100,
-              maxRequestSize: 25,
+              maxRequestSize: opts.maxRequestSize ?? 25,
             }),
           };
+        }
+        if (key === mediaCommandPermissionsKey(2, 3) && opts.bypassGroups) {
+          return { value: JSON.stringify({
+            playback: { mode: 'everyone' },
+            queue: opts.queueGroups ? { mode: 'server_groups', serverGroupIds: opts.queueGroups } : { mode: 'everyone' },
+            video: { mode: 'everyone' },
+            playlistBypass: { mode: 'server_groups', serverGroupIds: opts.bypassGroups },
+          }) };
         }
         return null;
       },
     },
     musicBot: { findUnique: async () => ({ serverConfigId: 2, virtualServerId: 3 }) },
     playlist: {
+      findMany: async () => [{ id: playlist.id, name: playlist.name }],
       findFirst: async () => {
         if (playlist.remoteAccess === 'hidden') return null;
         if (playlist.remoteAccess !== 'request') {
@@ -106,13 +124,14 @@ async function fixture(opts: {
     const thirdRow = opts.threeListeners
       ? `|clid=3 cid=8 client_type=0 client_unique_identifier=${third}`
       : '';
+    const peerRow = opts.onlyRequester ? '' : `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`;
     handler.eventBridge = {
-      executeCommand: async () => (
-        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
-        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
-        + thirdRow
-        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
-      ),
+      executeCommand: async (_configId: number, _sid: number, cmd: string) => cmd.startsWith('clientinfo')
+        ? `clid=1 cid=8 client_type=0 client_unique_identifier=${requester} client_servergroups=6\nerror id=0 msg=ok`
+        : `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
+          + peerRow
+          + thirdRow
+          + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok',
     };
   }
 
@@ -135,13 +154,78 @@ async function fixture(opts: {
     handler.onTextMessage(4, bot, { invokerid: who.clid, invokeruid: who.uid, msg });
 
   return {
-    bot, queue, runtime, privateReplies, historyWrites, playlist, openVote, command, handler,
+    bot, queue, runtime, privateReplies, channelMessages, historyWrites, playlist, openVote, command, handler,
     now: () => now,
     advance: (ms: number) => { now += ms; },
   };
 }
 
 describe('B4 !playlistvote chat ballots', () => {
+  it('routes chat !playlist through the shared vote and records history after approval', async () => {
+    const f = await fixture();
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 1);
+    assert.match(f.channelMessages[0] ?? '', /2 tracks/);
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+  });
+
+  it('keeps direct chat playlist queueing when voting is disabled', async () => {
+    const f = await fixture({ settingsEnabled: false });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.equal(f.historyWrites.length, 2);
+  });
+
+  it('refuses oversized or non-requestable chat playlists before opening a vote', async () => {
+    const large = await fixture({ maxRequestSize: 1 });
+    await large.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(large.queue.length, 0);
+    assert.equal(large.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(large.privateReplies.at(-1) ?? '', /limited to 1 tracks/);
+
+    const browseOnly = await fixture({ playlistAccess: 'browse' });
+    await browseOnly.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(browseOnly.queue.length, 0);
+    assert.equal(browseOnly.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(browseOnly.privateReplies.at(-1) ?? '', /does not allow/);
+  });
+
+  it('allows only explicitly selected live server groups to bypass the vote', async () => {
+    const permitted = await fixture({ bypassGroups: [6] });
+    await permitted.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(permitted.queue.length, 2);
+    assert.equal(permitted.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(permitted.privateReplies.at(-1) ?? '', /without a vote/);
+
+    const denied = await fixture({ bypassGroups: [7] });
+    await denied.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(denied.queue.length, 0);
+    assert.equal(denied.runtime.machine.listOpenForBot('4').length, 1);
+
+    const queueDenied = await fixture({ bypassGroups: [6], queueGroups: [7] });
+    await queueDenied.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(queueDenied.queue.length, 0, 'bypass never waives queue permission');
+    assert.equal(queueDenied.runtime.machine.listOpenForBot('4').length, 0);
+  });
+
+  it('requires the requester to match a live channel identity and auto-queues for one listener', async () => {
+    const forged = await fixture();
+    await forged.command('!playlist P', { clid: '1', uid: 'stale-uid' });
+    assert.equal(forged.queue.length, 0);
+    assert.equal(forged.runtime.machine.listOpenForBot('4').length, 0);
+
+    const alone = await fixture({ onlyRequester: true });
+    await alone.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(alone.queue.length, 2);
+    assert.equal(alone.runtime.machine.listOpenForBot('4').length, 0);
+    assert.equal(alone.historyWrites.length, 2);
+  });
+
   it('valid yes reaches threshold and queues once with history', async () => {
     const f = await fixture();
     f.openVote();

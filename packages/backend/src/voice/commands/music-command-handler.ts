@@ -416,8 +416,8 @@ export class MusicCommandHandler {
     return findSongForQuery(query, undefined, signal);
   }
 
-  private handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
-    return queue.handlePlaylist(this.context, botId, bot, userClid, args);
+  private handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string, expectedUid?: string): Promise<void> {
+    return queue.handlePlaylist(this.context, botId, bot, userClid, args, expectedUid);
   }
 
   private handleRepeat(bot: VoiceBot, userClid: number, args: string): void {

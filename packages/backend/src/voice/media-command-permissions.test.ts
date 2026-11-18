@@ -15,6 +15,7 @@ const restricted: MediaCommandPermissions = {
   playback: { mode: 'server_groups', serverGroupIds: [6, 12] },
   queue: { mode: 'server_groups', serverGroupIds: [7] },
   video: { mode: 'server_groups', serverGroupIds: [] },
+  playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
 };
 
 function store(initial: Array<[string, string]> = []) {
@@ -62,6 +63,16 @@ describe('media command permissions', () => {
     assert.equal(authorizeMediaCommandGroup(defaultMediaCommandPermissions(), 'playback', {}), true);
   });
 
+  it('keeps playlist vote bypass default-deny and limited to explicitly selected groups', () => {
+    const policy = defaultMediaCommandPermissions();
+    assert.deepEqual(policy.playlistBypass, { mode: 'server_groups', serverGroupIds: [] });
+    assert.equal(authorizeMediaCommandGroup(policy, 'playlistBypass', { uid: 'admin', serverGroupIds: [6] }), false);
+    const selected = { ...policy, playlistBypass: { mode: 'server_groups' as const, serverGroupIds: [6] } };
+    assert.equal(authorizeMediaCommandGroup(selected, 'playlistBypass', { uid: 'admin', serverGroupIds: [6] }), true);
+    assert.equal(authorizeMediaCommandGroup(selected, 'playlistBypass', { uid: 'human', serverGroupIds: [7] }), false);
+    assert.equal(authorizeMediaCommandGroup(selected, 'playlistBypass', { serverGroupIds: [6] }), false);
+  });
+
   it('allows read-only forms while enforcing control forms and aliases', () => {
     for (const command of ['queue', 'vol', 'volume', 'playlist', 'pl', 'radio', 'repeat']) {
       assert.equal(authorizeMediaCommand(restricted, command, {}, ''), true, command);
@@ -98,7 +109,10 @@ describe('media command permissions', () => {
     }
     assert.equal(parseMediaCommandPermissions({ playback: { mode: 'everyone' } }), null);
     assert.equal(parseMediaCommandPermissions({ ...restricted, extra: { mode: 'everyone' } }), null);
+    assert.equal(parseMediaCommandPermissions({ ...restricted, playlistBypass: { mode: 'everyone' } }), null);
     assert.equal(parseMediaCommandPermissions({ ...restricted, playback: { mode: 'everyone', serverGroupIds: [6] } }), null);
+    const legacy = { playback: restricted.playback, queue: restricted.queue, video: restricted.video };
+    assert.deepEqual(parseMediaCommandPermissions(legacy), { ...legacy, playlistBypass: { mode: 'server_groups', serverGroupIds: [] } });
     const { prisma, rows } = store();
     await assert.rejects(saveMediaCommandPermissions(prisma, 1, 1, {}), /Invalid/);
     assert.equal(rows.size, 0);

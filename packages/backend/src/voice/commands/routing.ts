@@ -417,7 +417,7 @@ export async function onTextMessage(
           break;
         case 'playlist':
         case 'pl':
-          await context.handlePlaylist(botId, bot, userClid, args);
+          await context.handlePlaylist(botId, bot, userClid, args, data.invokeruid);
           break;
         case 'repeat':
           context.handleRepeat(bot, userClid, args);

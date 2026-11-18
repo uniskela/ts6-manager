@@ -13,7 +13,12 @@ export interface MediaCommandIdentity {
 }
 
 export function defaultMediaCommandPermissions(): MediaCommandPermissions {
-  return { playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' } };
+  return {
+    playback: { mode: 'everyone' },
+    queue: { mode: 'everyone' },
+    video: { mode: 'everyone' },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
+  };
 }
 
 export function mediaCommandPermissionsKey(serverConfigId: number, virtualServerId: number): string {
@@ -28,8 +33,10 @@ export function parseMediaCommandPermissions(raw: unknown): MediaCommandPermissi
   if (Object.keys(obj).some((key) => !MEDIA_COMMAND_GROUPS.includes(key as MediaCommandGroup))) return null;
   for (const group of MEDIA_COMMAND_GROUPS) {
     const value = obj[group];
+    if (group === 'playlistBypass' && value === undefined) continue;
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const access = value as Record<string, unknown>;
+    if (group === 'playlistBypass' && access.mode === 'everyone') return null;
     if (access.mode === 'everyone' && Object.keys(access).length === 1) continue;
     if (access.mode !== 'server_groups' || Object.keys(access).some((key) => key !== 'mode' && key !== 'serverGroupIds')) return null;
     if (!Array.isArray(access.serverGroupIds) || access.serverGroupIds.length > 256
@@ -55,6 +62,7 @@ export async function loadMediaCommandPermissions(
     playback: { mode: 'server_groups', serverGroupIds: [] },
     queue: { mode: 'server_groups', serverGroupIds: [] },
     video: { mode: 'server_groups', serverGroupIds: [] },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
   };
 }
 
