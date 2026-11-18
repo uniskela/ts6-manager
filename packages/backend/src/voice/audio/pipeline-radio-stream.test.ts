@@ -20,8 +20,8 @@ describe('radio stream URL policy', () => {
   });
 
   it('lets an allowed LAN station through', async () => {
-    await assertRadioStreamUrl('http://192.168.1.20:8000/live', ['192.168.1.20']);
-    await assertRadioStreamUrl('http://192.168.1.20:8000/live', ['192.168.1.0/24']);
+    await assert.doesNotReject(assertRadioStreamUrl('http://192.168.1.20:8000/live', ['192.168.1.20']));
+    await assert.doesNotReject(assertRadioStreamUrl('http://192.168.1.20:8000/live', ['192.168.1.0/24']));
   });
 
   it('still refuses a LAN station outside the allowlist', async () => {

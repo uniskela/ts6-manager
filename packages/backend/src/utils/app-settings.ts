@@ -348,9 +348,7 @@ export async function loadIptvLocalHosts(prisma: PrismaClient): Promise<string[]
   return loadLocalHosts(prisma, IPTV_LOCAL_HOSTS_KEY, MAX_IPTV_LOCAL_HOSTS);
 }
 
-export type IptvLocalHostsUpdate = LocalHostsUpdate;
-
-export function parseIptvLocalHostsUpdate(body: Record<string, unknown> | null | undefined): IptvLocalHostsUpdate {
+export function parseIptvLocalHostsUpdate(body: Record<string, unknown> | null | undefined): LocalHostsUpdate {
   return parseLocalHostsUpdate(body, MAX_IPTV_LOCAL_HOSTS);
 }
 
@@ -367,8 +365,6 @@ export const MAX_RADIO_LOCAL_HOSTS = 32;
 export async function loadRadioLocalHosts(prisma: PrismaClient): Promise<string[]> {
   return loadLocalHosts(prisma, RADIO_LOCAL_HOSTS_KEY, MAX_RADIO_LOCAL_HOSTS);
 }
-
-export type RadioLocalHostsUpdate = LocalHostsUpdate;
 
 /**
  * The operator-approved LAN hosts for radio stations, as an allowlist. Returns
@@ -393,7 +389,7 @@ export async function radioLocalHosts(prisma: PrismaClient): Promise<string[]> {
   }
 }
 
-export function parseRadioLocalHostsUpdate(body: Record<string, unknown> | null | undefined): RadioLocalHostsUpdate {
+export function parseRadioLocalHostsUpdate(body: Record<string, unknown> | null | undefined): LocalHostsUpdate {
   return parseLocalHostsUpdate(body, MAX_RADIO_LOCAL_HOSTS);
 }
 
