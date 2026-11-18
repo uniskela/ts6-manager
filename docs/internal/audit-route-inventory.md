@@ -25,7 +25,7 @@ Prefer the same patterns:
 | `connection.create` / `update` / `credentials_changed` / `delete` | `POST/PUT/DELETE /api/servers` |
 | `flow.create` / `update` / `delete` / `enable` / `disable` | `/api/bots` mutations |
 | `user.create` / `update` / `delete` | `/api/users` mutations |
-| `settings.yt_cookies_*` / `settings.limits_update` / `settings.video_streaming_update` / `settings.iptv_network_update` / `settings.public_url_update` | `/api/settings` mutations |
+| `settings.yt_cookies_*` / `settings.limits_update` / `settings.video_streaming_update` / `settings.iptv_network_update` / `settings.radio_network_update` / `settings.public_url_update` | `/api/settings` mutations |
 | `channel_banner.upload` / `channel_banner.delete` | `POST /api/channel-banners` and `DELETE /api/channel-banners/:name` (target: `channel_banner`, id is the server-generated file name; no image bytes or original filenames) |
 | `server_icon.upload` / `server_icon.delete` | `POST /api/servers/:configId/vs/:sid/icons` and `DELETE /api/servers/:configId/vs/:sid/icons/:id` (target: `server_icon`, id is the icon's CRC32 number; no image bytes or original filenames) |
 | `music_bot.avatar_update` | `PUT /api/music-bots/:id/avatar` and `PUT /api/music-bots/:id/avatar/mode` (target: `music_bot`; records saving the selected image or mode, even if TeamSpeak refuses its application; the refusal is exposed as runtime `avatarError`; no image bytes, filenames or paths) |

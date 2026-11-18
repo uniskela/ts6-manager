@@ -63,6 +63,18 @@ Use a bot's console to choose sources and control playback. Changes to video opt
 
 Old links still work: `/music-bots` redirects to `/media-bots`; the old **Bots** tab goes to Bot Hub, and **Queue** with a bot ID goes to its console. **Video** with a bot ID goes to the console, otherwise to **Streaming defaults**. **Commands** goes to **Bot Flows → Chat commands**.
 
+## Radio stations on your local network
+
+A radio station on a private or shared address — a home server at `192.168.x.x`, a NAS, a local Icecast, a Tailscale host — is refused when you add or edit it: `Invalid URL: Private/reserved IP addresses are blocked`.
+
+Administrators allow those hosts from the **Radio stations** tab header: **Local hosts** (administrators only) opens the allowlist dialog. The button shows a count when the list is not empty. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`radio.lan`).
+
+After saving the list, add the station again — a station refused before was never saved. To move an existing station to a LAN address, edit it and save. The address is checked when a station is saved and again whenever it plays.
+
+The allowance covers admin-configured stations only. A URL typed in chat or pasted as a link stays blocked, and loopback, link-local and cloud metadata addresses cannot be allowed for any station.
+
+Radio streams are opened by the backend's own ffmpeg and do not pass through the media egress proxy, so `MEDIA_EGRESS_PROXY=off` has no effect on them. See [Security — Radio stations](security.md#radio-stations).
+
 ## Auto-stop chat notices
 
 **Media Library → Streaming defaults → Announce auto-stops in chat** is enabled by default. When a bot stops music or radio because its channel is empty, it posts a line such as `Stopped the music: the channel was empty for 5 minutes.` or `Stopped radio: the channel was empty for 5 minutes.` Video auto-stops also explain an empty channel or lack of viewers, for example `Stopped the stream: nobody watched for 5 minutes.` The duration follows the configured timeout.

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
-import { validateUrl } from "../../utils/url-validator.js";
+import { validateUrl, parseLocalHostAllowlist, type LocalHostAllowlist } from "../../utils/url-validator.js";
 import { acquireMediaEgress, egressEnvironment, mediaEgressEnabled } from "../egress/media-egress.js";
 
 export const SAMPLE_RATE = 48000;
@@ -10,6 +10,21 @@ export const FRAME_SIZE = 960; // 20ms at 48kHz
 export const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * 2; // 16-bit = 2 bytes per sample
 export const FRAME_MS = 20;
 const BITRATE = 96000;
+
+/**
+ * Refuse a live stream URL ffmpeg must not open. Private addresses pass only
+ * when listed in `localHosts` (the operator's radio allowlist); loopback,
+ * link-local and metadata addresses never pass.
+ */
+export async function assertRadioStreamUrl(url: string, localHosts?: readonly string[]): Promise<void> {
+  const localAllowlist: LocalHostAllowlist | undefined = localHosts?.length
+    ? parseLocalHostAllowlist(localHosts).allowlist
+    : undefined;
+  const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'], localAllowlist });
+  if (!urlCheck.valid) {
+    throw new Error(`Stream URL blocked: ${urlCheck.error}`);
+  }
+}
 
 export function isRemoteInput(input: string): boolean {
   return /^https?:\/\//i.test(input);
@@ -150,13 +165,17 @@ export class AudioPipeline {
   /**
    * Stream audio from a URL to raw PCM (for live radio streams).
    * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
+   *
+   * `localHosts` carries the operator-approved LAN hosts for radio stations
+   * the admin configured. It is never set from a URL a user typed. A pending
+   * load may be passed so callers can start ffmpeg without awaiting it first.
    */
-  async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+  async toPcmStream(
+    url: string,
+    localHosts?: readonly string[] | PromiseLike<readonly string[]>,
+  ): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
     // C4: Validate URL before passing to ffmpeg
-    const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
-    if (!urlCheck.valid) {
-      throw new Error(`Stream URL blocked: ${urlCheck.error}`);
-    }
+    await assertRadioStreamUrl(url, await localHosts);
 
     const args = [
       "-reconnect", "1",
