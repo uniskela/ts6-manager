@@ -3,7 +3,6 @@ import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
-import { radioLocalHosts } from '../../utils/app-settings.js';
 import { beginChatMediaRequest, getChatMediaGeneration, invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
@@ -80,7 +79,7 @@ export async function handleRadio(
     streamUrl: station.url,
   };
 
-  await bot.playStream(queueItem, { ...context.chatMusicSwitch(bot), localHosts: await radioLocalHosts(context.prisma) });
+  await bot.playStream(queueItem, context.chatMusicSwitch(bot));
   if (!isCurrent() || bot.nowPlaying !== queueItem) return;
   context.saveMusicRequest(bot, queueItem);
   context.reply(bot, userClid, `Now playing: ${station.name}`);
@@ -197,7 +196,7 @@ export async function handleSkip(context: CommandContext, bot: VoiceBot, userCli
   const next = bot.queue.next();
   if (next) {
     if (next.streamUrl) {
-      await bot.playStream(next, { ...context.chatMusicSwitch(bot), localHosts: await radioLocalHosts(context.prisma) });
+      await bot.playStream(next, context.chatMusicSwitch(bot));
     } else {
       await bot.play(next, context.chatMusicSwitch(bot));
     }
@@ -214,7 +213,7 @@ export async function handlePrev(context: CommandContext, bot: VoiceBot, userCli
   const prev = bot.queue.previous();
   if (prev) {
     if (prev.streamUrl) {
-      await bot.playStream(prev, { ...context.chatMusicSwitch(bot), localHosts: await radioLocalHosts(context.prisma) });
+      await bot.playStream(prev, context.chatMusicSwitch(bot));
     } else {
       await bot.play(prev, context.chatMusicSwitch(bot));
     }

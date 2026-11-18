@@ -5,7 +5,7 @@ import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { createPlayUrlHandler } from './music-bots.routes.js';
 import { defaultMediaUrlDeps } from '../voice/media-url-pipeline.js';
-import { radioLocalAllowlist, radioLocalHosts } from '../utils/app-settings.js';
+import { radioLocalAllowlist } from '../utils/app-settings.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 import {
@@ -126,10 +126,8 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
       assertCurrentBot();
       const cleanup = bot.queue.addForPlayback(item);
       try {
-        if (ref.kind === 'radio') {
-          // A radio station the admin configured may point at an allowed LAN host.
-          await bot.playStream(item, { replaceSessionIds, localHosts: await radioLocalHosts(prisma) });
-        } else await bot.play(item, { replaceSessionIds });
+        if (ref.kind === 'radio') await bot.playStream(item, { replaceSessionIds });
+        else await bot.play(item, { replaceSessionIds });
         started = bot.nowPlaying === item;
       } finally {
         if (!started) cleanup();

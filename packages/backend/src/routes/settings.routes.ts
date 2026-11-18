@@ -29,6 +29,7 @@ import {
   RADIO_LOCAL_HOSTS_KEY,
   loadRadioLocalHosts,
   parseRadioLocalHostsUpdate,
+  type LocalHostsUpdate,
   PUBLIC_URL_KEY,
   loadPublicUrl,
   parsePublicUrl,
@@ -290,69 +291,64 @@ settingsRoutes.put('/video-streaming', requireAdmin, async (req: Request, res: R
   } catch (err) { next(err); }
 });
 
-// GET /api/settings/iptv-network — LAN hosts allowed for admin-configured IPTV sources.
-settingsRoutes.get('/iptv-network', requireAdmin, async (req: Request, res: Response, next) => {
-  try {
-    res.json({ allowedLocalHosts: await loadIptvLocalHosts(req.app.locals.prisma) });
-  } catch (err) { next(err); }
+/**
+ * GET/PUT /api/settings/<path> for one admin LAN-host allowlist. IPTV and
+ * radio keep separate lists; both use the same rules and audit shape.
+ */
+function localHostsRoutes(path: 'iptv-network' | 'radio-network', list: {
+  key: string;
+  load: (prisma: any) => Promise<string[]>;
+  parse: (body: Record<string, unknown> | null | undefined) => LocalHostsUpdate;
+  action: 'settings.iptv_network_update' | 'settings.radio_network_update';
+}): void {
+  settingsRoutes.get(`/${path}`, requireAdmin, async (req: Request, res: Response, next) => {
+    try {
+      res.json({ allowedLocalHosts: await list.load(req.app.locals.prisma) });
+    } catch (err) { next(err); }
+  });
+
+  settingsRoutes.put(`/${path}`, requireAdmin, async (req: Request, res: Response, next) => {
+    try {
+      const prisma = req.app.locals.prisma;
+      const parsed = list.parse(req.body);
+      if (!parsed.ok) throw new AppError(400, parsed.error);
+      const value = JSON.stringify(parsed.value);
+      await recordLocalSuccess(
+        prisma,
+        {
+          actor: actorFromRequest(req.user),
+          action: list.action,
+          target: { type: 'settings', id: path },
+        },
+        (tx) => tx.appSetting.upsert({
+          where: { key: list.key },
+          create: { key: list.key, value },
+          update: { value },
+        }),
+      );
+      res.json({ allowedLocalHosts: parsed.value });
+    } catch (err) { next(err); }
+  });
+}
+
+// LAN hosts allowed for admin-configured IPTV sources.
+localHostsRoutes('iptv-network', {
+  key: IPTV_LOCAL_HOSTS_KEY,
+  load: loadIptvLocalHosts,
+  parse: parseIptvLocalHostsUpdate,
+  action: 'settings.iptv_network_update',
 });
 
-// PUT /api/settings/iptv-network — replace the allowed local IPTV hosts.
-settingsRoutes.put('/iptv-network', requireAdmin, async (req: Request, res: Response, next) => {
-  try {
-    const prisma = req.app.locals.prisma;
-    const parsed = parseIptvLocalHostsUpdate(req.body);
-    if (!parsed.ok) throw new AppError(400, parsed.error);
-    const value = JSON.stringify(parsed.value);
-    await recordLocalSuccess(
-      prisma,
-      {
-        actor: actorFromRequest(req.user),
-        action: 'settings.iptv_network_update',
-        target: { type: 'settings', id: 'iptv-network' },
-      },
-      (tx) => tx.appSetting.upsert({
-        where: { key: IPTV_LOCAL_HOSTS_KEY },
-        create: { key: IPTV_LOCAL_HOSTS_KEY, value },
-        update: { value },
-      }),
-    );
-    res.json({ allowedLocalHosts: parsed.value });
-  } catch (err) { next(err); }
+// LAN hosts allowed for admin-configured radio stations.
+localHostsRoutes('radio-network', {
+  key: RADIO_LOCAL_HOSTS_KEY,
+  load: loadRadioLocalHosts,
+  parse: parseRadioLocalHostsUpdate,
+  action: 'settings.radio_network_update',
 });
 
-// GET /api/settings/radio-network — LAN hosts allowed for admin-configured radio stations.
-settingsRoutes.get('/radio-network', requireAdmin, async (req: Request, res: Response, next) => {
-  try {
-    res.json({ allowedLocalHosts: await loadRadioLocalHosts(req.app.locals.prisma) });
-  } catch (err) { next(err); }
-});
-
-// PUT /api/settings/radio-network — replace the allowed local radio hosts.
-settingsRoutes.put('/radio-network', requireAdmin, async (req: Request, res: Response, next) => {
-  try {
-    const prisma = req.app.locals.prisma;
-    const parsed = parseRadioLocalHostsUpdate(req.body);
-    if (!parsed.ok) throw new AppError(400, parsed.error);
-    const value = JSON.stringify(parsed.value);
-    await recordLocalSuccess(
-      prisma,
-      {
-        actor: actorFromRequest(req.user),
-        action: 'settings.radio_network_update',
-        target: { type: 'settings', id: 'radio-network' },
-      },
-      (tx) => tx.appSetting.upsert({
-        where: { key: RADIO_LOCAL_HOSTS_KEY },
-        create: { key: RADIO_LOCAL_HOSTS_KEY, value },
-        update: { value },
-      }),
-    );
-    res.json({ allowedLocalHosts: parsed.value });
-  } catch (err) { next(err); }
-});
-
-async function publicUrlSettings(prisma: any): Promise<PublicUrlSettings> {  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
+async function publicUrlSettings(prisma: any): Promise<PublicUrlSettings> {
+  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
   const saved = parsePublicUrl(row?.value);
   const { publicUrl: effective, source } = await loadPublicUrl(prisma);
   return { publicUrl: saved.ok ? saved.value : null, effective, source };

@@ -101,7 +101,7 @@ For the split image, a peer with a private address that connects straight to the
 **Breaking change if a media source lives on a `100.64.0.0/10` address**, which includes Tailscale hosts and carrier-grade NAT. 1.10.x reached those addresses without asking. 1.11.0 treats them like private addresses and refuses them until an admin allows the host.
 
 - **IPTV playlists and channels**: add the hostname, IP or a narrow range under **IPTV → Local hosts**, then refresh the playlist. See [Playlists and channels on your local network](video-streaming.md#playlists-and-channels-on-your-local-network).
-- **Radio stations**: add the hostname, IP or a narrow range under **Radio stations → Local hosts**, then edit the station to save it again. See [Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network).
+- **Radio stations**: add the hostname, IP or a narrow range under **Radio stations → Local hosts**, then add the station (or save its edit) again. See [Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network).
 - **Pasted links, `!play` and `!stream` links, and Bot Flow HTTP requests** to those addresses cannot be allowed. Serve the media through an allowed IPTV playlist or radio station, or from a publicly reachable address instead.
 
 Cloud metadata addresses stay blocked even when listed.

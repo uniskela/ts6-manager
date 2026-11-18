@@ -1,22 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/settings.api';
+import { useLocalHostsSettings, useUpdateLocalHostsSettings } from './use-local-hosts-settings';
 
 export const RADIO_NETWORK_QUERY_KEY = ['radio-network-settings'] as const;
 
 /** Admin-approved LAN hosts for radio stations (admins only). */
 export function useRadioNetworkSettings(enabled: boolean) {
-  return useQuery({
-    queryKey: RADIO_NETWORK_QUERY_KEY,
-    queryFn: () => settingsApi.getRadioNetwork(),
-    enabled,
-    staleTime: 60_000,
-  });
+  return useLocalHostsSettings(RADIO_NETWORK_QUERY_KEY, settingsApi.getRadioNetwork, enabled);
 }
 
 export function useUpdateRadioNetworkSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (hosts: string[]) => settingsApi.updateRadioNetwork(hosts),
-    onSuccess: (data) => qc.setQueryData(RADIO_NETWORK_QUERY_KEY, data),
-  });
+  return useUpdateLocalHostsSettings(RADIO_NETWORK_QUERY_KEY, settingsApi.updateRadioNetwork);
 }

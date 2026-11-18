@@ -1,22 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/settings.api';
+import { useLocalHostsSettings, useUpdateLocalHostsSettings } from './use-local-hosts-settings';
 
 export const IPTV_NETWORK_QUERY_KEY = ['iptv-network-settings'] as const;
 
 /** Admin-approved LAN hosts for IPTV sources (admins only). */
 export function useIptvNetworkSettings(enabled: boolean) {
-  return useQuery({
-    queryKey: IPTV_NETWORK_QUERY_KEY,
-    queryFn: () => settingsApi.getIptvNetwork(),
-    enabled,
-    staleTime: 60_000,
-  });
+  return useLocalHostsSettings(IPTV_NETWORK_QUERY_KEY, settingsApi.getIptvNetwork, enabled);
 }
 
 export function useUpdateIptvNetworkSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (hosts: string[]) => settingsApi.updateIptvNetwork(hosts),
-    onSuccess: (data) => qc.setQueryData(IPTV_NETWORK_QUERY_KEY, data),
-  });
+  return useUpdateLocalHostsSettings(IPTV_NETWORK_QUERY_KEY, settingsApi.updateIptvNetwork);
 }

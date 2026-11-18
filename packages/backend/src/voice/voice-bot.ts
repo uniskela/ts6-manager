@@ -100,6 +100,13 @@ export interface VoiceBotConfig {
    */
   loadYoutubeDirectStream?: () => Promise<boolean>;
   /**
+   * Operator-approved LAN hosts for admin-configured radio stations
+   * (Media Library → Radio stations → Local hosts). Read each time a radio
+   * stream opens, so every path that starts one (play, resume, skip, queue
+   * advance, Auto-DJ) uses the current list. Only radio streams use it.
+   */
+  loadRadioLocalHosts?: () => Promise<readonly string[]>;
+  /**
    * Asked when a video source finishes on its own (end of a clip, encoder
    * exit). Resolving `true` means the caller took over, for example by
    * switching to the next queued video, and the stream must stay up.
@@ -141,12 +148,6 @@ export interface MusicStartOptions {
   replaceSessionIds?: string[];
   /** Internal fallback playback ownership; never accepted from an API request. */
   automation?: () => boolean;
-  /**
-   * Admin-approved LAN hosts this radio station may use. Set only by the
-   * caller that loaded the operator's radio allowlist (the admin-configured
-   * station list); never from a request body or a URL a user typed.
-   */
-  localHosts?: string[];
 }
 
 /** One log record for a viewer-controlled signaling error. */
@@ -788,21 +789,21 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Start polling ICY metadata for a radio stream. */
-  private startIcyPolling(streamUrl: string, localHosts?: readonly string[]): void {
+  private startIcyPolling(streamUrl: string, localHosts: Promise<readonly string[]>): void {
     this.stopIcyPolling();
     this.lastStreamTitle = '';
 
     // Immediate first fetch
-    this.fetchAndUpdateIcy(streamUrl, localHosts);
+    void this.fetchAndUpdateIcy(streamUrl, localHosts);
 
     this.icyPollTimer = setInterval(() => {
-      this.fetchAndUpdateIcy(streamUrl, localHosts);
+      void this.fetchAndUpdateIcy(streamUrl, localHosts);
     }, 15000);
   }
 
-  private async fetchAndUpdateIcy(streamUrl: string, localHosts?: readonly string[]): Promise<void> {
+  private async fetchAndUpdateIcy(streamUrl: string, localHosts: Promise<readonly string[]>): Promise<void> {
     try {
-      const title = await fetchIcyMetadata(streamUrl, 10000, localHosts);
+      const title = await fetchIcyMetadata(streamUrl, 10000, await localHosts);
       if (!title || title === this.lastStreamTitle || !this._nowPlaying) return;
       this.lastStreamTitle = title;
 
@@ -1223,6 +1224,15 @@ export class VoiceBot extends EventEmitter {
     return dl.filePath;
   }
 
+  /** The operator's radio allowlist; an unreadable setting means none. */
+  private async radioLocalHosts(): Promise<readonly string[]> {
+    try {
+      return (await this.config.loadRadioLocalHosts?.()) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
@@ -1233,9 +1243,11 @@ export class VoiceBot extends EventEmitter {
     }
     if (options.automation && !options.automation()) return [];
     if (!options.automation) this.automation?.requestQueued();
-    // Operator-approved LAN hosts for admin-configured radio stations. The
-    // caller loaded them; they never come from a URL a user typed.
-    const localHosts = options.localHosts ?? [];
+    // Operator-approved LAN hosts for admin-configured radio stations. Only
+    // stations and radio history rows carry a streamUrl, never a typed URL.
+    // Started here and awaited by the pipeline, so ffmpeg opens on the same
+    // tick as before.
+    const localHosts = this.radioLocalHosts();
     const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {

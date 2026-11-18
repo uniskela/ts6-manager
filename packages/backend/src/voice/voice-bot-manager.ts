@@ -14,7 +14,7 @@ import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { mediaCacheFor } from './audio/media-cache.js';
-import { loadMaxVideoDuration, loadRadioLocalHosts, loadVideoStreamingSettings, loadYoutubeDirectStream } from '../utils/app-settings.js';
+import { loadMaxVideoDuration, loadVideoStreamingSettings, loadYoutubeDirectStream, radioLocalHosts } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 import { parseAutoStopEmptySeconds } from './streaming/lifecycle.js';
@@ -156,6 +156,8 @@ export class VoiceBotManager extends EventEmitter {
         ?? (() => loadVideoStreamingSettings(this.prisma, config.serverConfigId)),
       loadYoutubeDirectStream: config.loadYoutubeDirectStream
         ?? (() => loadYoutubeDirectStream(this.prisma)),
+      loadRadioLocalHosts: config.loadRadioLocalHosts
+        ?? (() => radioLocalHosts(this.prisma)),
       videoSourceFinished: async (reason, detail) => videoQueue?.onSourceFinished(reason, detail) ?? false,
     });
 
@@ -185,9 +187,7 @@ export class VoiceBotManager extends EventEmitter {
       }),
       loadSource: (source, lastTrackId) => this.loadAutomationSource(config.serverConfigId, source, lastTrackId),
       play: async (item, isCurrent) => {
-        // A radio station the admin configured may point at an allowed LAN host.
-        const localHosts = await loadRadioLocalHosts(this.prisma);
-        if (item.streamUrl) await bot.playStream(item, { automation: isCurrent, localHosts });
+        if (item.streamUrl) await bot.playStream(item, { automation: isCurrent });
         else await bot.play(item, { automation: isCurrent });
       },
       stop: () => bot.clearPlayback('channel_empty', 'Auto-DJ suspended'),

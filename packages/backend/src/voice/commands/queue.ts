@@ -3,7 +3,6 @@ import { QueueFullError, type QueueItem, type QueueReservation } from '../playli
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../media-url-pipeline.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
-import { radioLocalHosts } from '../../utils/app-settings.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
@@ -51,7 +50,6 @@ export async function startOrAppendMediaItem(
   isCurrent: () => boolean,
   options: { replaceSessionIds: string[] } | undefined,
   reservation?: QueueReservation,
-  localHosts?: string[],
 ): Promise<boolean | null> {
   if (bot.status === 'playing' || bot.status === 'paused') {
     bot.queue.add(item, reservation);
@@ -61,7 +59,7 @@ export async function startOrAppendMediaItem(
   const cleanup = bot.queue.addForPlayback(item, reservation);
   let started = false;
   try {
-    if (item.streamUrl) await bot.playStream(item, { ...options, localHosts });
+    if (item.streamUrl) await bot.playStream(item, options);
     else await bot.play(item, options);
     started = isCurrent() && bot.nowPlaying === item;
   } finally {
@@ -80,15 +78,7 @@ export async function enqueueMediaItem(
 ): Promise<boolean | null> {
   if (!['connected', 'playing', 'paused'].includes(bot.status)) throw new Error('Bot is not connected');
   const idle = bot.status === 'connected';
-  const queued = await startOrAppendMediaItem(
-    bot,
-    item,
-    isCurrent,
-    idle ? context.chatMusicSwitch(bot) : undefined,
-    reservation,
-    // A queued radio station may point at an allowed LAN host.
-    await radioLocalHosts(context.prisma),
-  );
+  const queued = await startOrAppendMediaItem(bot, item, isCurrent, idle ? context.chatMusicSwitch(bot) : undefined, reservation);
   if (queued === null) return null;
   context.saveMusicRequest(bot, item);
   return queued;
@@ -352,7 +342,7 @@ export async function handleQueue(
       return;
     }
     if (item.streamUrl) {
-      await bot.playStream(item, { ...context.chatMusicSwitch(bot), localHosts: await radioLocalHosts(context.prisma) });
+      await bot.playStream(item, context.chatMusicSwitch(bot));
     } else {
       await bot.play(item, context.chatMusicSwitch(bot));
     }

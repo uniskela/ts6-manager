@@ -25,7 +25,6 @@ import { summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
 import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
 import { flushBotVolumeSave, saveBotVolume } from '../voice/bot-volume.js';
-import { radioLocalHosts } from '../utils/app-settings.js';
 
 export { saveBotVolume } from '../voice/bot-volume.js';
 export const musicBotRoutes: Router = Router();
@@ -671,12 +670,7 @@ musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next)
       streamUrl: station.url,
     };
 
-    // A radio station the admin configured may point at an allowed LAN host.
-    const localHosts = await radioLocalHosts(prisma);
-    await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(queueItem, {
-      replaceSessionIds,
-      localHosts,
-    }), replaceSessionIds);
+    await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(queueItem, { replaceSessionIds }), replaceSessionIds);
     await saveRequestHistory(req, bot, queueItem);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -905,9 +899,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
           if (playlistExpansionGeneration(id) !== generation) return [];
           const item = bot.queue.playAt(loadQueue());
           if (!item) return [];
-          if (!item.streamUrl) return bot.play(item, { replaceSessionIds });
-          // A radio station the admin configured may point at an allowed LAN host.
-          return bot.playStream(item, { replaceSessionIds, localHosts: await radioLocalHosts(prisma) });
+          return item.streamUrl ? bot.playStream(item, { replaceSessionIds }) : bot.play(item, { replaceSessionIds });
         }, replaceSessionIds);
       } catch (err: any) {
         if (err instanceof QueueFullError) throw err;
@@ -1007,12 +999,7 @@ musicBotRoutes.post('/:id/queue/:index/play', async (req: Request, res: Response
     if (!item) throw new AppError(400, 'Invalid queue index');
 
     if (item.streamUrl) {
-      // A radio station the admin configured may point at an allowed LAN host.
-      const localHosts = await radioLocalHosts(req.app.locals.prisma);
-      await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(item, {
-        replaceSessionIds,
-        localHosts,
-      }), replaceSessionIds);
+      await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(item, { replaceSessionIds }), replaceSessionIds);
     } else {
       await runMediaAudited(req, bot, 'media.music.start', () => bot.play(item, { replaceSessionIds }), replaceSessionIds);
     }

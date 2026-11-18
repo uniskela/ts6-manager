@@ -69,7 +69,7 @@ A radio station on a private or shared address — a home server at `192.168.x.x
 
 Administrators allow those hosts from the **Radio stations** tab header: **Local hosts** (administrators only) opens the allowlist dialog. The button shows a count when the list is not empty. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`radio.lan`).
 
-After saving the list, edit the station and save it again — the address is checked when a station is saved and again when it plays.
+After saving the list, add the station again — a station refused before was never saved. To move an existing station to a LAN address, edit it and save. The address is checked when a station is saved and again whenever it plays.
 
 The allowance covers admin-configured stations only. A URL typed in chat or pasted as a link stays blocked, and loopback, link-local and cloud metadata addresses cannot be allowed for any station.
 
