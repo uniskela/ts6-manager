@@ -14,8 +14,10 @@ import {
   getAuthRefreshCoordinationEpoch,
   isPersistedRefreshAdoptionAllowed,
   markLocalRefreshSuccess,
+  readPublishedSuccessor,
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
+  takeAdoptedSuccessor,
 } from './auth-refresh-coord';
 import type { E2EAuthTestHooks } from './e2e-auth-test-types';
 
@@ -318,6 +320,10 @@ async function refreshAccessToken(): Promise<string | null> {
       if (adopted) return adopted;
 
       const attempt = async (): Promise<string | null> => {
+        // The credential identifies the refresh round. Tabs competing for the
+        // SAME credential coordinate; a tab that is merely open is not in the
+        // round and can never own or block the refresh.
+        const roundToken = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
         const pair = await coordinateRefreshOwnership(async () => {
           const again = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
           if (again) {
@@ -327,6 +333,15 @@ async function refreshAccessToken(): Promise<string | null> {
             }
           }
           if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
+          // A peer that won this round may have published the successor it
+          // minted. Presenting the now-consumed token again would be a genuine
+          // replay (the server rejects it and may revoke the whole family), so
+          // adopt the published successor instead.
+          const published = readPublishedSuccessor(roundToken);
+          if (published) {
+            const refreshed = await runRefresh(published);
+            if (refreshed) return refreshed;
+          }
           const latest = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
           if (!latest) {
             if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
@@ -334,8 +349,18 @@ async function refreshAccessToken(): Promise<string | null> {
             return null;
           }
           return runRefresh(latest);
-        });
+        }, roundToken);
         if (!pair) return null;
+        // A peer may have published the successor it minted for this round
+        // instead of sending a BroadcastChannel result. Adopt that token and
+        // mint a fresh access token from it, rather than presenting the
+        // now-consumed token again (which would be a genuine replay).
+        const publishedSuccessor = takeAdoptedSuccessor();
+        if (publishedSuccessor && !pair.accessToken) {
+          const refreshed = await runRefresh(publishedSuccessor);
+          if (refreshed) return refreshed.accessToken;
+          return null;
+        }
         if (shouldApplyRefreshResponse({
           startEpoch,
           currentEpoch: getAuthRefreshCoordinationEpoch(),

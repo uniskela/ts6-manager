@@ -132,7 +132,11 @@ jobs:
   media-cache:
     name: Media cache tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # macOS runners are frequently unavailable, and the job then sits queued
+    # until the job timeout cancels it. A successful macOS run takes about a
+    # minute (setup, install and build ~36 s, tests ~3 s), so this budget is
+    # about waiting for a runner, not about running the tests slowly.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -164,6 +168,9 @@ jobs:
 
       - name: Run media cache and library file tests
         working-directory: packages/backend
+        # Bounds a genuinely hanging test. The step normally takes a few
+        # seconds; this is a ceiling, not an expectation.
+        timeout-minutes: 10
         run: pnpm exec tsx --test src/voice/audio/media-cache.test.ts src/voice/audio/library-files.test.ts src/routes/music-library.delete-song.test.ts
 
   sidecar:
