@@ -1243,11 +1243,13 @@ export class VoiceBot extends EventEmitter {
     }
     if (options.automation && !options.automation()) return [];
     if (!options.automation) this.automation?.requestQueued();
-    // Operator-approved LAN hosts for admin-configured radio stations. Only
-    // stations and radio history rows carry a streamUrl, never a typed URL.
-    // Started here and awaited by the pipeline, so ffmpeg opens on the same
-    // tick as before.
-    const localHosts = this.radioLocalHosts();
+    // Only radio items may use the operator-approved LAN allowlist. Ordinary
+    // URL streams remain subject to strict public-address validation even
+    // when an upstream caller provides a streamUrl.
+    // Start loading without awaiting, preserving same-tick stream startup.
+    const localHosts = item.source === 'radio'
+      ? this.radioLocalHosts()
+      : Promise.resolve([] as readonly string[]);
     const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
