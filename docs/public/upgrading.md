@@ -42,7 +42,27 @@ Rolling back needs the previous image tag and the matching database backup.
 
 1.12.0 adds the `Playlist.remoteAccess` column. The 1.11.4 image cannot safely reconcile a database that already contains that column because Prisma refuses to drop it while it holds data. Therefore, roll back by restoring the **pre-upgrade** database into a **new empty volume**; do not point the old image at the upgraded volume and do not use `prisma db push --accept-data-loss`.
 
-Use the same `JWT_SECRET`, `ENCRYPTION_KEY` and `SIDECAR_SECRET` as before the upgrade. The examples below use Docker Compose with the stock `backend-data` volume. Adjust the project and volume names to match the installation.
+Use the same `JWT_SECRET`, `ENCRYPTION_KEY` and `SIDECAR_SECRET` as before the upgrade. The examples below use Docker Compose with the stock `backend-data` volume. Adjust the project and volume names to match the installation. **The archive in step 3 must be taken before the first v1.12.0 startup**, while the database still has its v1.11.4 schema; a backup made after upgrade cannot be used to roll back safely.
+
+In a Bash shell, set both names to the **actual** volume names shown by `docker compose config` / `docker volume ls`. Replace the example values before executing any command, and use the same shell session for subsequent commands:
+
+~~~bash
+BACKEND_VOLUME='REPLACE_WITH_EXISTING_BACKEND_VOLUME_NAME'
+ROLLBACK_VOLUME='REPLACE_WITH_NEW_ROLLBACK_VOLUME_NAME'
+case "$BACKEND_VOLUME:$ROLLBACK_VOLUME" in
+  *REPLACE_WITH*|'':*)
+    echo 'Set BACKEND_VOLUME and ROLLBACK_VOLUME to real volume names first' >&2
+    exit 1
+    ;;
+esac
+test "$BACKEND_VOLUME" != "$ROLLBACK_VOLUME" || { echo 'Rollback volume must be different' >&2; exit 1; }
+docker volume inspect "$BACKEND_VOLUME" >/dev/null
+if docker volume inspect "$ROLLBACK_VOLUME" >/dev/null 2>&1; then
+  echo 'Choose a NEW rollback volume name; an existing volume may contain upgraded files' >&2
+  exit 1
+fi
+~~~
+
 
 **1. Stop every service that can open the database.** This prevents SQLite journal/WAL files from changing while the backup is copied:
 
@@ -57,7 +77,7 @@ docker compose stop
 ~~~bash
 docker volume ls
 docker run --rm \
-  -v <your-project>_backend-data:/data:ro \
+  -v "$BACKEND_VOLUME:/data:ro" \
   -v "${PWD}:/backup" \
   alpine sh -c 'cd /data && tar czf /backup/ts6-backend-data-v1.11.4.tgz .'
 sha256sum ts6-backend-data-v1.11.4.tgz > ts6-backend-data-v1.11.4.tgz.sha256
@@ -76,28 +96,34 @@ docker compose stop
 **6. Create a new empty backend volume and restore the archive into it.** Do not extract the archive over the upgraded volume: that can leave the upgraded database or WAL/journal files in place.
 
 ~~~bash
-docker volume create <your-project>_backend-data-rollback
+docker volume create "$ROLLBACK_VOLUME"
 docker run --rm \
-  -v <your-project>_backend-data-rollback:/restore \
+  -v "$ROLLBACK_VOLUME:/restore" \
   -v "${PWD}:/backup:ro" \
-  alpine sh -c 'cd /restore && tar xzf /backup/ts6-backend-data-v1.11.4.tgz && sha256sum -c /backup/ts6-backend-data-v1.11.4.tgz.sha256'
+  alpine sh -ec 'cd /backup && sha256sum -c ts6-backend-data-v1.11.4.tgz.sha256 && cd /restore && tar xzf /backup/ts6-backend-data-v1.11.4.tgz'
 ~~~
 
-The checksum command must report `OK` before the old image is started. The restored volume must contain the archive's `.schema-version` and `ts6webui.db`; it must not contain an upgraded database or upgraded WAL/journal companion.
+The checksum command must report `OK` **before extraction**, from `/backup` where the archive actually exists. The restored volume must contain the archive's `.schema-version` and `ts6webui.db`; it must not contain an upgraded database or upgraded WAL/journal companion.
 
 **7. Point the old Compose configuration at the new rollback volume.** In the Compose file, change the backend data mount to the rollback volume while keeping the music volume and all secrets unchanged:
 
 ~~~yaml
-volumes:
-  - backend-data-rollback:/app/packages/backend/data
-  - music-data:/data/music
+# Illustrative excerpt: make these edits in the EXISTING Compose file.
+# Preserve every other backend mount, service setting, and existing volume.
+services:
+  backend:
+    volumes:
+      - backend-data-rollback:/app/packages/backend/data
+      - music-data:/data/music
 
+# Add this entry under your ONE existing top-level "volumes:" section.
 volumes:
   backend-data-rollback:
-    name: <your-project>_backend-data-rollback
-  music-data:
-    name: <your-project>_music-data
+    external: true
+    name: your_new_rollback_volume_name
 ~~~
+
+Replace `your_new_rollback_volume_name` with the value of `ROLLBACK_VOLUME`. Do not paste this excerpt as a replacement for the complete Compose file or create a second top-level `volumes:` section. If you use a Compose override, verify that it **replaces** the original backend data mount rather than adding a second mount at the same target.
 
 If the deployment uses an externally managed volume, update that volume mapping instead. Confirm the effective mount before starting:
 
