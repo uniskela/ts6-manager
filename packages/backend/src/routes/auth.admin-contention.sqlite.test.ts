@@ -184,6 +184,7 @@ describe(`SQLite administrative contention (pool ${String(POOL)})`, { timeout: 3
         );
         assert.equal(summary.disableFailures, 0, 'an admin disable failed under the production pool');
         assert.equal(summary.resetFailures, 0, 'an admin password reset failed under the production pool');
+        assert.equal(summary.auth500s, 0, 'authentication returned HTTP 500 under the production pool');
       }
 
       // Regardless of pool size: a successful administrative operation must
