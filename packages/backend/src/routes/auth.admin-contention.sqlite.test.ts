@@ -24,9 +24,18 @@ import { writeFileSync } from 'node:fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { config } from '../config.js';
+import { DEFAULT_SQLITE_CONNECTION_LIMIT } from '../utils/sqlite-datasource.js';
 import { openSqliteAuthApp, type SqliteAuthPool } from './test-support/sqlite-auth-app.js';
 
-const POOL = (process.env.SQLITE_TEST_POOL ?? 'default') as SqliteAuthPool;
+// Run CI against the production SQLite pool by default. Use
+// SQLITE_TEST_POOL=default only for the historical Prisma-pool comparison.
+const configuredPool = process.env.SQLITE_TEST_POOL;
+const POOL: SqliteAuthPool = configuredPool === undefined
+  ? DEFAULT_SQLITE_CONNECTION_LIMIT
+  : configuredPool === 'default' ? 'default' : Number(configuredPool);
+if (POOL !== 'default' && (!Number.isSafeInteger(POOL) || POOL < 1)) {
+  throw new Error('SQLITE_TEST_POOL must be "default" or a positive integer');
+}
 const BCRYPT_COST = 12;
 
 type AdminOutcome = {
@@ -162,6 +171,19 @@ describe(`SQLite administrative contention (pool ${String(POOL)})`, { timeout: 3
       console.log(`ADMIN_CONTENTION_SUMMARY=${JSON.stringify(summary)}`);
       if (process.env.SQLITE_REPORT) {
         writeFileSync(process.env.SQLITE_REPORT, JSON.stringify({ summary, outcomes }, null, 2));
+      }
+
+      // The production pool must allow every admin disable/reset to commit.
+      // Otherwise this suite could pass even if every admin write failed,
+      // because the per-operation security assertions below only run on 204.
+      // The historical Prisma-default comparison remains diagnostic-only.
+      if (POOL === DEFAULT_SQLITE_CONNECTION_LIMIT) {
+        assert.ok(
+          fixture.engine.some((message) => message.includes(`sqlite pool with ${DEFAULT_SQLITE_CONNECTION_LIMIT} connections`)),
+          'the fixture did not start with the production SQLite pool size',
+        );
+        assert.equal(summary.disableFailures, 0, 'an admin disable failed under the production pool');
+        assert.equal(summary.resetFailures, 0, 'an admin password reset failed under the production pool');
       }
 
       // Regardless of pool size: a successful administrative operation must
