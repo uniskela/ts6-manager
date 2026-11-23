@@ -3,6 +3,7 @@ import { QueueFullError, type QueueItem, type QueueReservation } from '../playli
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../media-url-pipeline.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
+import { handleChatPlaylistRequest } from './playlist-vote-chat.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
@@ -182,6 +183,7 @@ export async function handlePlaylist(
   bot: VoiceBot,
   userClid: number,
   args: string,
+  expectedUid?: string,
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   if (!serverConfigId) { context.reply(bot, userClid, 'No server configured.'); return; }
@@ -221,6 +223,10 @@ export async function handlePlaylist(
     duration: song.duration ?? undefined, filePath: song.filePath,
     source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
   }));
+  if (await handleChatPlaylistRequest(context, bot, userClid, expectedUid, playlist.id, {
+    botId,
+    stopGeneration,
+  })) return;
   try {
     bot.queue.addMany(items);
   } catch (err) {

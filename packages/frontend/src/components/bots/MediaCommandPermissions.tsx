@@ -12,6 +12,7 @@ const descriptions: Record<MediaCommandGroup, string> = {
   playback: 'Playback and music controls',
   queue: 'Queue and playlist changes',
   video: 'Video and IPTV controls',
+  playlistBypass: 'Queue playlists without a vote',
 };
 
 export function MediaCommandPermissions() {
@@ -42,8 +43,8 @@ function PermissionEditor({ configId, sid, policy, groups, groupsPending, groups
     <Card className="mb-5">
       <CardHeader><CardTitle className="text-base">Built-in command permissions</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        <p className="max-w-3xl text-sm text-muted-foreground">For the selected server, virtual server #{sid}. Everyone remains the default after upgrading. Help and information commands stay accessible; !voteskip is available to human listeners.</p>
-        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-3" data-testid="media-permission-groups">
+        <p className="max-w-3xl text-sm text-muted-foreground">For the selected server, virtual server #{sid}. Existing playback, queue and video permissions remain unchanged after upgrading. Playlist vote bypass is limited to selected server groups and defaults to nobody.</p>
+        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-4" data-testid="media-permission-groups">
         {MEDIA_COMMAND_GROUPS.map((group) => {
           const access = current[group];
           const ids = access.mode === 'server_groups' ? access.serverGroupIds : [];
@@ -54,11 +55,15 @@ function PermissionEditor({ configId, sid, policy, groups, groupsPending, groups
           return (
             <fieldset key={group} disabled={save.isPending} className="min-w-0 space-y-2 rounded-md border p-3">
               <legend className="px-1 text-sm font-medium">{descriptions[group]}</legend>
-              <label htmlFor={`media-access-${group}`} className="block text-sm">Who can use this?</label>
-              <Select value={access.mode} onValueChange={(mode) => update(group, mode === 'everyone' ? { mode: 'everyone' } : { mode: 'server_groups', serverGroupIds: [] })}>
-                <SelectTrigger id={`media-access-${group}`} className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="everyone">Everyone</SelectItem><SelectItem value="server_groups">Selected TeamSpeak server groups</SelectItem></SelectContent>
-              </Select>
+              {group === 'playlistBypass' ? null : <label htmlFor={`media-access-${group}`} className="block text-sm">Who can use this?</label>}
+              {group === 'playlistBypass' ? (
+                <p className="text-sm">Selected TeamSpeak server groups only</p>
+              ) : (
+                <Select value={access.mode} onValueChange={(mode) => update(group, mode === 'everyone' ? { mode: 'everyone' } : { mode: 'server_groups', serverGroupIds: [] })}>
+                  <SelectTrigger id={`media-access-${group}`} className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="everyone">Everyone</SelectItem><SelectItem value="server_groups">Selected TeamSpeak server groups</SelectItem></SelectContent>
+                </Select>
+              )}
               {access.mode === 'server_groups' && (
                 <div className="space-y-2">
                   {groupsPending && <p className="text-xs text-muted-foreground">Loading server groups…</p>}
