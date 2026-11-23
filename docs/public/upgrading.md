@@ -49,14 +49,27 @@ In a Bash shell, set both names to the **actual** volume names shown by `docker 
 ~~~bash
 BACKEND_VOLUME='REPLACE_WITH_EXISTING_BACKEND_VOLUME_NAME'
 ROLLBACK_VOLUME='REPLACE_WITH_NEW_ROLLBACK_VOLUME_NAME'
-case "$BACKEND_VOLUME:$ROLLBACK_VOLUME" in
-  *REPLACE_WITH*|'':*)
-    echo 'Set BACKEND_VOLUME and ROLLBACK_VOLUME to real volume names first' >&2
+# Reject placeholders and empty names independently (an empty ROLLBACK_VOLUME must
+# not slip through after BACKEND_VOLUME is filled in).
+case "$BACKEND_VOLUME" in
+  ''|*REPLACE_WITH*)
+    echo 'Set BACKEND_VOLUME to the existing backend data volume name first' >&2
+    exit 1
+    ;;
+esac
+case "$ROLLBACK_VOLUME" in
+  ''|*REPLACE_WITH*)
+    echo 'Set ROLLBACK_VOLUME to a new empty rollback volume name first' >&2
     exit 1
     ;;
 esac
 test "$BACKEND_VOLUME" != "$ROLLBACK_VOLUME" || { echo 'Rollback volume must be different' >&2; exit 1; }
-docker volume inspect "$BACKEND_VOLUME" >/dev/null
+# Abort immediately when the source volume is missing so Docker cannot create an
+# unintended empty volume during a later -v bind and look like a successful backup.
+docker volume inspect "$BACKEND_VOLUME" >/dev/null 2>&1 || {
+  echo "BACKEND_VOLUME '$BACKEND_VOLUME' was not found; refusing to continue" >&2
+  exit 1
+}
 if docker volume inspect "$ROLLBACK_VOLUME" >/dev/null 2>&1; then
   echo 'Choose a NEW rollback volume name; an existing volume may contain upgraded files' >&2
   exit 1
