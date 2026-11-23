@@ -728,3 +728,81 @@ describe('Kody: expired !playlist lazy settlement', () => {
     assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote has ended/i);
   });
 });
+
+describe('Kody: concurrent and unrelated expired playlist settlement', () => {
+  it('recognises a passed vote settled concurrently by another worker', async () => {
+    const f = await fixture({ threeListeners: true });
+    f.openVote();
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    f.advance(60_000);
+    shrinkElectorateToTwo(f);
+
+    const originalFind = f.prisma.playlist.findFirst.bind(f.prisma.playlist);
+    let selections = 0;
+    let releaseLookup!: () => void;
+    let lookupReached!: () => void;
+    const lookupWaiting = new Promise<void>((resolve) => { lookupReached = resolve; });
+    const lookupReleased = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    f.prisma.playlist.findFirst = async (args: any) => {
+      // Hold the second select (restash) to reproduce another settler closing
+      // this vote during the awaited lookup.
+      if (args.select && ++selections === 2) {
+        lookupReached();
+        await lookupReleased;
+      }
+      return originalFind(args);
+    };
+
+    const pendingRequest = f.command('!playlist P', { clid: '1', uid: requester });
+    await lookupWaiting;
+    const concurrent = await settleExpiredPlaylistVote({
+      runtime: f.runtime,
+      botId: 4,
+      channelId: 8,
+      serverConfigId: 2,
+      listenerUids: [requester, peer],
+      maxTracks: 25,
+      nowMs: f.now(),
+      announceBot: f.bot,
+      loadPlaylist: async () => f.playlist as any,
+      onQueued: async (start) => {
+        for (const item of start.items) {
+          await f.prisma.musicRequest.upsert({ create: { url: item.id } });
+        }
+      },
+    });
+    assert.equal(concurrent.queued, true);
+    releaseLookup();
+    await pendingRequest;
+
+    assert.equal(f.queue.length, 2, 'queued only once');
+    assert.equal(f.historyWrites.length, 2, 'history recorded only once');
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Playlist vote passed.*queued/i);
+    assert.doesNotMatch(f.privateReplies.at(-1) ?? '', /vote failed|vote has ended|Too many playlist requests/i);
+    assert.equal(f.channelMessages.filter((m) => /Playlist vote passed/i.test(m)).length, 1);
+  });
+
+  it('does not claim someone else\'s expired vote queued the caller\'s different playlist', async () => {
+    const f = await fixture({ threeListeners: true });
+    f.openVote();
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    f.advance(60_000);
+    shrinkElectorateToTwo(f);
+
+    const anotherPlaylist = { ...f.playlist, id: 2, name: 'X' };
+    f.prisma.playlist.findMany = async () => [{ id: 1, name: 'P' }, { id: 2, name: 'X' }];
+    const originalFind = f.prisma.playlist.findFirst.bind(f.prisma.playlist);
+    f.prisma.playlist.findFirst = async (args: any) =>
+      args.where?.id === 2 ? anotherPlaylist : originalFind(args);
+
+    await f.command('!playlist X', { clid: '2', uid: peer });
+
+    assert.equal(f.queue.length, 2, 'only the earlier vote for P was settled');
+    assert.equal(f.historyWrites.length, 2);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Your playlist was not queued/i);
+    assert.doesNotMatch(f.privateReplies.at(-1) ?? '', /Playlist vote passed.*queued|Too many playlist requests/i);
+    assert.equal(f.channelMessages.filter((m) => /Playlist vote passed/i.test(m)).length, 1);
+  });
+});
