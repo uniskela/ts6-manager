@@ -310,13 +310,14 @@ export async function handleChatPlaylistRequest(
   });
   if (!opened.ok) {
     if (!runtime.machine.getOpen(botKey, channelId)) runtime.clearStash(botKey, channelId);
-    const message = opened.code === 'request_too_large'
-      ? `Playlist requests are limited to ${settings.maxRequestSize} tracks.`
-      : opened.code === 'vote_running'
-        ? 'A playlist vote is already running in this channel.'
-        : opened.code === 'rate_limited'
-          ? 'Too many playlist requests. Try again shortly.'
-          : 'Could not open a playlist vote right now.';
+    let message = 'Could not open a playlist vote right now.';
+    if (opened.code === 'request_too_large') {
+      message = `Playlist requests are limited to ${settings.maxRequestSize} tracks.`;
+    } else if (opened.code === 'vote_running') {
+      message = 'A playlist vote is already running in this channel.';
+    } else if (opened.code === 'rate_limited') {
+      message = 'Too many playlist requests. Try again shortly.';
+    }
     privateReply(context, bot, clid, message, 'playlist-request-private');
     return true;
   }
@@ -341,7 +342,7 @@ export async function handleChatPlaylistRequest(
     );
   } else if (opened.vote.status === 'open' && opened.created) {
     const live = runtime.machine.getOpen(botKey, channelId);
-    if (live && live.id === opened.vote.id) {
+    if (live?.id === opened.vote.id) {
       scheduleChatDeadline(context, bot, runtime, {
         botKey,
         channelId,

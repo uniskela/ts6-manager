@@ -161,9 +161,7 @@ export class PlaylistVoteRuntime {
     const due = [...this.chatDeadlines.entries()]
       .filter(([, entry]) => entry.deadlineMs <= nowMs)
       .map(([key]) => key);
-    for (const key of due) {
-      await this.fireChatDeadlineSettlement(key, nowMs);
-    }
+    await Promise.all(due.map((key) => this.fireChatDeadlineSettlement(key, nowMs)));
   }
 
   private async fireChatDeadlineSettlement(key: string, nowMsOverride?: number): Promise<void> {
@@ -180,7 +178,7 @@ export class PlaylistVoteRuntime {
     const botKey = sep >= 0 ? key.slice(0, sep) : key;
     const channelId = sep >= 0 ? key.slice(sep + 1) : '';
     const open = this.machine.getOpen(botKey, channelId);
-    if (!open || open.id !== entry.voteId || open.status !== 'open') return;
+    if (open?.id !== entry.voteId || open?.status !== 'open') return;
 
     const nowMs = nowMsOverride ?? entry.getNow();
     try {
@@ -217,51 +215,34 @@ export class PlaylistVoteRuntime {
 
   /** Bot move / disconnect / stop — cancel every open vote for this bot. */
   cancelBotUnavailable(botId: number, nowMs: number): void {
-    const botKey = botKeyFor(botId);
-    const bot = this.getBot(botId);
-    for (const open of this.machine.listOpenForBot(botKey)) {
-      this.cancelChatDeadlineSettlement(botKey, open.channelId);
-      const events = this.machine.cancelExternal({
-        botKey,
-        channelId: open.channelId,
-        reason: 'bot_unavailable',
-        listenerUids: [],
-        nowMs,
-      });
-      this.clearStash(botKey, open.channelId);
-      deliverPlaylistVoteAnnouncements(bot, Number(open.channelId), events);
-    }
+    this.cancelOpenVotes(botId, nowMs, 'bot_unavailable');
   }
 
   /** Admin/session revoke of one listener — cancel if they are the requester. */
   cancelRequesterRevoked(botId: number, uid: string, nowMs: number): void {
-    const botKey = botKeyFor(botId);
-    const bot = this.getBot(botId);
-    for (const open of this.machine.listOpenForBot(botKey)) {
-      if (open.requesterUid !== uid) continue;
-      this.cancelChatDeadlineSettlement(botKey, open.channelId);
-      const events = this.machine.cancelExternal({
-        botKey,
-        channelId: open.channelId,
-        reason: 'revoked',
-        listenerUids: [],
-        nowMs,
-      });
-      this.clearStash(botKey, open.channelId);
-      deliverPlaylistVoteAnnouncements(bot, Number(open.channelId), events);
-    }
+    this.cancelOpenVotes(botId, nowMs, 'revoked', (open) => open.requesterUid === uid);
   }
 
   /** Admin bot-wide revoke — cancel every open vote on that bot. */
   cancelAllRevoked(botId: number, nowMs: number): void {
+    this.cancelOpenVotes(botId, nowMs, 'revoked');
+  }
+
+  private cancelOpenVotes(
+    botId: number,
+    nowMs: number,
+    reason: 'bot_unavailable' | 'revoked',
+    include: (open: { channelId: string; requesterUid: string }) => boolean = () => true,
+  ): void {
     const botKey = botKeyFor(botId);
     const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
+      if (!include(open)) continue;
       this.cancelChatDeadlineSettlement(botKey, open.channelId);
       const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
-        reason: 'revoked',
+        reason,
         listenerUids: [],
         nowMs,
       });
