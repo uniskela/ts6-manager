@@ -51,6 +51,7 @@ async function fixture(opts: {
     ts3ClientId: 99,
     status: 'playing',
     nowPlaying: null,
+    stopGeneration: 0,
     queue,
     videoSessionInfo: () => null,
     floodHoldActive: false,
@@ -60,7 +61,12 @@ async function fixture(opts: {
     sendTextMessage: (_clid: number, text: string) => { privateReplies.push(text); },
     play: async () => undefined,
   };
-  const manager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
+  let liveBot: any = bot;
+  const manager = {
+    getBot: () => liveBot,
+    getBotsForServer: async () => [{ bot: liveBot }],
+    replaceBot: (next: any) => { liveBot = next; },
+  };
 
   const prisma: any = {
     appSetting: {
@@ -155,6 +161,7 @@ async function fixture(opts: {
 
   return {
     bot, queue, runtime, privateReplies, channelMessages, historyWrites, playlist, openVote, command, handler,
+    manager,
     now: () => now,
     advance: (ms: number) => { now += ms; },
   };
@@ -273,7 +280,8 @@ describe('B4 !playlistvote chat ballots', () => {
     assert.match(f.privateReplies.at(-1) ?? '', /ended/i);
   });
 
-  it('post-deadline still-requestable chat ballot queues once with history', async () => {
+  it('lazy settle without a chat deadline timer still queues once when threshold is met', async () => {
+    // Remote-style open (no chat timer). Chat-opened votes use the R2-1 timer path below.
     const f = await fixture({ threeListeners: true });
     f.openVote();
     await f.command('!playlistvote yes', { clid: '2', uid: peer });
@@ -330,4 +338,183 @@ describe('B4 !playlistvote chat ballots', () => {
 
   // Concurrent remote HTTP vs chat races live in
   // `listener-remote.playlist-requests.test.ts` (B4 cross-interface describe) (real routes + restash barriers).
+});
+
+describe('R2-1 chat deadline settlement', () => {
+  it('settles a quiet chat vote at the deadline without further traffic', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 1);
+    assert.equal(f.queue.length, 0);
+
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    assert.match(f.channelMessages.join('\n'), /Playlist vote failed:.*"P".*not enough yes votes/i);
+
+    // Exactly once: a second due pass and a late ballot do nothing.
+    const announces = f.channelMessages.length;
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.channelMessages.length, announces);
+  });
+
+  it('fails closed when deadline listener lookup is unavailable', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    f.handler.eventBridge = {
+      executeCommand: async () => { throw new Error('clientlist offline'); },
+    };
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.channelMessages.join('\n'), /playlist unavailable/i);
+  });
+
+  it('does not approve a delayed callback against a later smaller electorate', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+
+    // Far past the grace window; shrink the live channel to 2/2 yes.
+    f.advance(10 * 60_000);
+    f.handler.eventBridge = {
+      executeCommand: async () => (
+        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
+        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
+        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
+      ),
+    };
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.queue.length, 0, 'delayed settle must fail closed');
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+  });
+
+  it('passes at the deadline when the live electorate meets threshold', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+
+    f.advance(60_000);
+    f.handler.eventBridge = {
+      executeCommand: async () => (
+        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
+        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
+        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
+      ),
+    };
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    assert.match(f.channelMessages.join('\n'), /Playlist vote passed/i);
+
+    // Cooldown / exactly-once: timer+ballot concurrency cannot double-queue.
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+  });
+
+  it('cancels a pending deadline timer when the vote is cancelled', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    f.runtime.cancelBotUnavailable(4, f.now());
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+  });
+
+  it('arms failed-requester cooldown after a quiet deadline failure', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    resetChatReplyCooldownsForTests();
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Too many playlist requests/i);
+  });
+});
+
+describe('R2-2 stop-generation continuity', () => {
+  it('refuses bypass queueDirect after Stop during async lookup', async () => {
+    const f = await fixture({ bypassGroups: [6] });
+    const original = f.handler.eventBridge.executeCommand;
+    f.handler.eventBridge = {
+      executeCommand: async (...args: unknown[]) => {
+        f.bot.stopGeneration += 1;
+        return original(...args);
+      },
+    };
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+  });
+
+  it('refuses openVote after bot replacement during async lookup', async () => {
+    const f = await fixture();
+    const original = f.handler.eventBridge.executeCommand;
+    f.handler.eventBridge = {
+      executeCommand: async (...args: unknown[]) => {
+        f.manager.replaceBot({ ...f.bot, stopGeneration: f.bot.stopGeneration + 1 });
+        return original(...args);
+      },
+    };
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+  });
+
+  it('refuses openVote after queue clear bumps stopGeneration during clientlist', async () => {
+    const f = await fixture();
+    let sawClientlist = false;
+    const original = f.handler.eventBridge.executeCommand;
+    f.handler.eventBridge = {
+      executeCommand: async (configId: number, sid: number, cmd: string) => {
+        if (cmd.startsWith('clientlist')) {
+          sawClientlist = true;
+          f.bot.stopGeneration += 1;
+        }
+        return original(configId, sid, cmd);
+      },
+    };
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(sawClientlist, true);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+  });
+});
+
+describe('R2-3 sole-listener queue-full reply', () => {
+  it('does not claim a vote started when sole-listener open fails as queue_full', async () => {
+    const f = await fixture({ onlyRequester: true });
+    f.queue.addMany(Array.from({ length: 499 }, (_, i) => item(`pad-${i}`)));
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.queue.length, 499, 'nothing from the playlist was queued');
+    assert.equal(f.historyWrites.length, 0);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.match(f.channelMessages.join('\n'), /queue full/i);
+    assert.match(f.privateReplies.at(-1) ?? '', /The queue is full/i);
+    assert.ok(!(f.privateReplies.at(-1) ?? '').includes('vote started'));
+  });
 });

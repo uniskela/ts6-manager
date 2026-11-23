@@ -223,7 +223,10 @@ export async function handlePlaylist(
     duration: song.duration ?? undefined, filePath: song.filePath,
     source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
   }));
-  if (await handleChatPlaylistRequest(context, bot, userClid, expectedUid, playlist.id)) return;
+  if (await handleChatPlaylistRequest(context, bot, userClid, expectedUid, playlist.id, {
+    botId,
+    stopGeneration,
+  })) return;
   try {
     bot.queue.addMany(items);
   } catch (err) {

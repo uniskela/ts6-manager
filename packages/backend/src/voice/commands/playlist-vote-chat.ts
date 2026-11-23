@@ -4,6 +4,7 @@ import { playlistVotesForRemote } from '../playlist-vote/lifecycle.js';
 import {
   botKeyFor,
   channelIdFor,
+  DEADLINE_SETTLE_GRACE_MS,
   eventsQueued,
   PLAYLIST_VOTE_WINDOW_MS,
   startCurrentIfIdle,
@@ -23,6 +24,12 @@ import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply } from './dedupe.js';
 import { mediaScope } from './media-access.js';
+
+/** Continuity captured before awaited playlist lookups (R2-2). */
+export type ChatPlaylistContinuity = {
+  botId: number;
+  stopGeneration: number;
+};
 
 function privateReply(context: CommandContext, bot: VoiceBot, clid: number, message: string, scope = 'playlist-vote-private'): void {
   if (bot.floodHoldActive) return;
@@ -83,6 +90,72 @@ function runtimeOf(context: CommandContext): PlaylistVoteRuntime | null {
   return playlistVotesForRemote(context.listenerRemote) ?? null;
 }
 
+function continuityBroken(
+  context: CommandContext,
+  bot: VoiceBot,
+  continuity: ChatPlaylistContinuity | undefined,
+): boolean {
+  if (!continuity) return false;
+  return context.voiceBotManager.getBot(continuity.botId) !== bot
+    || bot.stopGeneration !== continuity.stopGeneration;
+}
+
+function scheduleChatDeadline(
+  context: CommandContext,
+  bot: VoiceBot,
+  runtime: PlaylistVoteRuntime,
+  input: {
+    botKey: string;
+    channelId: string;
+    channelIdNum: number;
+    configId: number;
+    sid: number;
+    voteId: string;
+    deadlineMs: number;
+    maxTracks: number;
+  },
+): void {
+  const settleBotId = bot.currentConfig.id;
+  runtime.scheduleChatDeadlineSettlement({
+    botKey: input.botKey,
+    channelId: input.channelId,
+    voteId: input.voteId,
+    deadlineMs: input.deadlineMs,
+    getNow: () => context.playlistVoteNow(),
+    settle: async (nowMs) => {
+      // Stale timer after cancel/replace: vote id check lives in the runtime fire path.
+      // A substantially delayed callback must not approve against a later electorate (R2-1).
+      const late = nowMs > input.deadlineMs + DEADLINE_SETTLE_GRACE_MS;
+      let listenerUids: readonly string[] | null = null;
+      if (!late && context.eventBridge) {
+        const excluded = context.musicBotClidsOnServer(input.configId, input.sid);
+        excluded.add(bot.ts3ClientId);
+        const listeners = await listHumanMediaListeners(
+          (cmd) => context.eventBridge!.executeCommand(input.configId, input.sid, cmd),
+          input.channelIdNum,
+          excluded,
+        );
+        listenerUids = listeners ? listeners.map((peer) => peer.uid) : null;
+      }
+      await settleExpiredPlaylistVote({
+        runtime,
+        botId: settleBotId,
+        channelId: input.channelIdNum,
+        serverConfigId: input.configId,
+        listenerUids,
+        maxTracks: input.maxTracks,
+        nowMs,
+        announceBot: bot,
+        loadPlaylist: (serverConfigId, id) => loadPlaylist(context.prisma, serverConfigId, id),
+        onQueued: async (start) => {
+          await startCurrentIfIdle(bot, start.item);
+          await saveHistory(context.prisma, bot, start.items);
+        },
+      });
+    },
+  });
+}
+
 /** Start the B3 whole-playlist request lifecycle for chat `!playlist <name>`. */
 export async function handleChatPlaylistRequest(
   context: CommandContext,
@@ -90,6 +163,7 @@ export async function handleChatPlaylistRequest(
   clid: number,
   expectedUid: string | undefined,
   playlistId: number,
+  continuity?: ChatPlaylistContinuity,
 ): Promise<boolean> {
   let configId: number;
   let sid: number;
@@ -150,6 +224,10 @@ export async function handleChatPlaylistRequest(
   }
 
   if (bypass) {
+    if (continuityBroken(context, bot, continuity)) {
+      privateReply(context, bot, clid, 'Playback was stopped before the playlist was loaded.', 'playlist-request-private');
+      return true;
+    }
     const queued = runtime.queueDirect(bot.currentConfig.id, items);
     if (queued.result !== 'queued') {
       privateReply(context, bot, clid, 'The queue is full.', 'playlist-request-private');
@@ -182,6 +260,7 @@ export async function handleChatPlaylistRequest(
 
   const open = runtime.machine.getOpen(botKey, channelId);
   if (open && nowMs >= open.deadlineMs) {
+    runtime.cancelChatDeadlineSettlement(botKey, channelId);
     await settleExpiredPlaylistVote({
       runtime,
       botId: bot.currentConfig.id,
@@ -201,6 +280,11 @@ export async function handleChatPlaylistRequest(
   const current = runtime.machine.getOpen(botKey, channelId);
   if (current && !(current.requesterUid === requester.uid && current.playlist.id === playlist.id)) {
     privateReply(context, bot, clid, 'A playlist vote is already running in this channel.', 'playlist-request-private');
+    return true;
+  }
+
+  if (continuityBroken(context, bot, continuity)) {
+    privateReply(context, bot, clid, 'Playback was stopped before the playlist was loaded.', 'playlist-request-private');
     return true;
   }
 
@@ -239,12 +323,37 @@ export async function handleChatPlaylistRequest(
 
   deliverPlaylistVoteAnnouncements(bot, channelIdNum, opened.events);
   if (eventsQueued(opened.events)) {
+    runtime.cancelChatDeadlineSettlement(botKey, channelId);
     const start = runtime.takeStart(opened.vote.id);
     if (start) {
       await startCurrentIfIdle(bot, start.item);
       await saveHistory(context.prisma, bot, start.items);
     }
     privateReply(context, bot, clid, 'Playlist vote passed — queued.', 'playlist-request-private');
+  } else if (opened.vote.status === 'failed') {
+    runtime.cancelChatDeadlineSettlement(botKey, channelId);
+    privateReply(
+      context,
+      bot,
+      clid,
+      opened.vote.reason === 'queue_full' ? 'The queue is full.' : 'Playlist vote failed.',
+      'playlist-request-private',
+    );
+  } else if (opened.vote.status === 'open' && opened.created) {
+    const live = runtime.machine.getOpen(botKey, channelId);
+    if (live && live.id === opened.vote.id) {
+      scheduleChatDeadline(context, bot, runtime, {
+        botKey,
+        channelId,
+        channelIdNum,
+        configId,
+        sid,
+        voteId: live.id,
+        deadlineMs: live.deadlineMs,
+        maxTracks: settings.maxRequestSize,
+      });
+    }
+    privateReply(context, bot, clid, 'Playlist vote started. You are counted as yes.', 'playlist-request-private');
   } else {
     privateReply(context, bot, clid, opened.created
       ? 'Playlist vote started. You are counted as yes.'
@@ -326,6 +435,7 @@ export async function handlePlaylistVote(
   }
 
   if (nowMs >= open.deadlineMs) {
+    runtime.cancelChatDeadlineSettlement(botKey, channelId);
     const settled = await settleExpiredPlaylistVote({
       runtime,
       botId: bot.currentConfig.id,
@@ -383,6 +493,10 @@ export async function handlePlaylistVote(
     }
     privateReply(context, bot, clid, 'No open playlist vote in this channel.');
     return;
+  }
+
+  if (result.vote.status !== 'open') {
+    runtime.cancelChatDeadlineSettlement(botKey, channelId);
   }
 
   deliverPlaylistVoteAnnouncements(bot, channelIdNum, result.events);

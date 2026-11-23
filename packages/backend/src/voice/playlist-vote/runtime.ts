@@ -17,6 +17,11 @@ const MAX_UPCOMING_TRACKS = 500;
 export const BALLOT_RATE_LIMIT = 10;
 export const BALLOT_RATE_WINDOW_MS = 60_000;
 export const PLAYLIST_VOTE_WINDOW_MS = 60_000;
+/**
+ * If a deadline timer runs more than this after `deadlineMs`, settle fail-closed
+ * without applying a later electorate (R2-1 delayed-callback rule).
+ */
+export const DEADLINE_SETTLE_GRACE_MS = 2_000;
 
 export type VoteBot = {
   status: string;
@@ -47,6 +52,16 @@ type Pending = {
   refreshedAtMs: number;
 };
 
+type ChatDeadlineSettlement = {
+  voteId: string;
+  deadlineMs: number;
+  /** Playlist-vote clock used when the timer was armed (for delay + fake-clock tests). */
+  getNow: () => number;
+  settle: (nowMs: number) => Promise<void>;
+  timer: ReturnType<typeof setTimeout> | null;
+  running: boolean;
+};
+
 function chan(botKey: string, channelId: string): string {
   return `${botKey}\0${channelId}`;
 }
@@ -64,6 +79,7 @@ export class PlaylistVoteRuntime {
   private readonly pending = new Map<string, Pending>();
   private readonly starts = new Map<string, { botId: number; item: QueueItem; items: QueueItem[] }>();
   private readonly getBot: (botId: number) => VoteBot | null | undefined;
+  private readonly chatDeadlines = new Map<string, ChatDeadlineSettlement>();
 
   private readonly botCooldownUntil = new Map<string, number>();
   private readonly failedRequesterUntil = new Map<string, number>();
@@ -100,6 +116,80 @@ export class PlaylistVoteRuntime {
     });
   }
 
+  /**
+   * Arm one unref'd chat-vote deadline settlement (R2-1). Replaces any prior
+   * timer for the same bot+channel. Callers supply settle work that uses the
+   * shared `settleExpiredPlaylistVote` path.
+   */
+  scheduleChatDeadlineSettlement(input: {
+    botKey: string;
+    channelId: string;
+    voteId: string;
+    deadlineMs: number;
+    getNow: () => number;
+    settle: (nowMs: number) => Promise<void>;
+  }): void {
+    const key = chan(input.botKey, input.channelId);
+    this.cancelChatDeadlineSettlement(input.botKey, input.channelId);
+    const entry: ChatDeadlineSettlement = {
+      voteId: input.voteId,
+      deadlineMs: input.deadlineMs,
+      getNow: input.getNow,
+      settle: input.settle,
+      timer: null,
+      running: false,
+    };
+    this.chatDeadlines.set(key, entry);
+    const delay = Math.max(0, input.deadlineMs - input.getNow());
+    const timer = setTimeout(() => {
+      void this.fireChatDeadlineSettlement(key);
+    }, delay);
+    timer.unref?.();
+    entry.timer = timer;
+  }
+
+  cancelChatDeadlineSettlement(botKey: string, channelId: string): void {
+    const key = chan(botKey, channelId);
+    const entry = this.chatDeadlines.get(key);
+    if (!entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    this.chatDeadlines.delete(key);
+  }
+
+  /** Test helper: run every due chat deadline settlement against a fake clock. */
+  async runDueChatDeadlineSettlements(nowMs: number): Promise<void> {
+    const due = [...this.chatDeadlines.entries()]
+      .filter(([, entry]) => entry.deadlineMs <= nowMs)
+      .map(([key]) => key);
+    for (const key of due) {
+      await this.fireChatDeadlineSettlement(key, nowMs);
+    }
+  }
+
+  private async fireChatDeadlineSettlement(key: string, nowMsOverride?: number): Promise<void> {
+    const entry = this.chatDeadlines.get(key);
+    if (!entry || entry.running) return;
+    entry.running = true;
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    this.chatDeadlines.delete(key);
+
+    const sep = key.indexOf('\0');
+    const botKey = sep >= 0 ? key.slice(0, sep) : key;
+    const channelId = sep >= 0 ? key.slice(sep + 1) : '';
+    const open = this.machine.getOpen(botKey, channelId);
+    if (!open || open.id !== entry.voteId || open.status !== 'open') return;
+
+    const nowMs = nowMsOverride ?? entry.getNow();
+    try {
+      await entry.settle(nowMs);
+    } catch (err) {
+      console.error('[PlaylistVote] Chat deadline settlement failed:', err);
+    }
+  }
+
   stash(botKey: string, channelId: string, pending: Pending): void {
     this.pending.set(chan(botKey, channelId), pending);
   }
@@ -116,6 +206,10 @@ export class PlaylistVoteRuntime {
 
   /** Process / bot restart: drop open votes and any pending stash (no queue). */
   onRestart(): void {
+    for (const entry of this.chatDeadlines.values()) {
+      if (entry.timer) clearTimeout(entry.timer);
+    }
+    this.chatDeadlines.clear();
     this.machine.onRestart();
     this.pending.clear();
     this.starts.clear();
@@ -126,6 +220,7 @@ export class PlaylistVoteRuntime {
     const botKey = botKeyFor(botId);
     const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
+      this.cancelChatDeadlineSettlement(botKey, open.channelId);
       const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
@@ -144,6 +239,7 @@ export class PlaylistVoteRuntime {
     const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
       if (open.requesterUid !== uid) continue;
+      this.cancelChatDeadlineSettlement(botKey, open.channelId);
       const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
@@ -161,6 +257,7 @@ export class PlaylistVoteRuntime {
     const botKey = botKeyFor(botId);
     const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
+      this.cancelChatDeadlineSettlement(botKey, open.channelId);
       const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
