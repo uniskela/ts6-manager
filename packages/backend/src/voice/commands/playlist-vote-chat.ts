@@ -276,7 +276,7 @@ export async function handleChatPlaylistRequest(
     const settleNow = Math.max(nowMs, context.playlistVoteNow());
     if (settleNow >= open.deadlineMs) {
       runtime.cancelChatDeadlineSettlement(botKey, channelId);
-      await settleExpiredPlaylistVote({
+      const settled = await settleExpiredPlaylistVote({
         runtime,
         botId: bot.currentConfig.id,
         channelId: channelIdNum,
@@ -295,6 +295,15 @@ export async function handleChatPlaylistRequest(
           await saveHistory(context.prisma, bot, start.items);
         },
       });
+      // The expired vote is finished; do not fall through to openVote during cooldown.
+      privateReply(
+        context,
+        bot,
+        clid,
+        settled.queued ? 'Playlist vote passed — queued.' : 'That playlist vote has ended.',
+        'playlist-request-private',
+      );
+      return true;
     }
   }
   const current = runtime.machine.getOpen(botKey, channelId);
