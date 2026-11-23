@@ -167,6 +167,30 @@ async function fixture(opts: {
   };
 }
 
+type ChatFixture = Awaited<ReturnType<typeof fixture>>;
+
+/** Drop the third listener so the live channel is requester+peer only. */
+function shrinkElectorateToTwo(f: ChatFixture): void {
+  f.handler.eventBridge = {
+    executeCommand: async () => (
+      `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
+      + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
+      + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
+    ),
+  };
+}
+
+function assertNoQueueOrHistory(f: ChatFixture): void {
+  assert.equal(f.queue.length, 0);
+  assert.equal(f.historyWrites.length, 0);
+  assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+}
+
+function assertStoppedBeforeLoad(f: ChatFixture): void {
+  assertNoQueueOrHistory(f);
+  assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+}
+
 describe('B4 !playlistvote chat ballots', () => {
   it('routes chat !playlist through the shared vote and records history after approval', async () => {
     const f = await fixture();
@@ -288,13 +312,7 @@ describe('B4 !playlistvote chat ballots', () => {
     assert.equal(f.queue.length, 0);
     f.advance(61_000);
     // Drop third so live electorate is 2 with 2 yes at settle.
-    f.handler.eventBridge = {
-      executeCommand: async () => (
-        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
-        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
-        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
-      ),
-    };
+    shrinkElectorateToTwo(f);
     await f.command('!playlistvote yes', { clid: '2', uid: peer });
     assert.equal(f.queue.length, 2);
     assert.equal(f.historyWrites.length, 2);
@@ -386,17 +404,10 @@ describe('R2-1 chat deadline settlement', () => {
 
     // Far past the grace window; shrink the live channel to 2/2 yes.
     f.advance(10 * 60_000);
-    f.handler.eventBridge = {
-      executeCommand: async () => (
-        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
-        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
-        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
-      ),
-    };
+    shrinkElectorateToTwo(f);
     await f.runtime.runDueChatDeadlineSettlements(f.now());
     assert.equal(f.queue.length, 0, 'delayed settle must fail closed');
-    assert.equal(f.historyWrites.length, 0);
-    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assertNoQueueOrHistory(f);
 
     await f.command('!playlistvote yes', { clid: '2', uid: peer });
     assert.equal(f.queue.length, 0);
@@ -409,13 +420,7 @@ describe('R2-1 chat deadline settlement', () => {
     assert.equal(f.queue.length, 0);
 
     f.advance(60_000);
-    f.handler.eventBridge = {
-      executeCommand: async () => (
-        `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
-        + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
-        + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
-      ),
-    };
+    shrinkElectorateToTwo(f);
     await f.runtime.runDueChatDeadlineSettlements(f.now());
     assert.equal(f.queue.length, 2);
     assert.equal(f.historyWrites.length, 2);
@@ -462,10 +467,7 @@ describe('R2-2 stop-generation continuity', () => {
       },
     };
     await f.command('!playlist P', { clid: '1', uid: requester });
-    assert.equal(f.queue.length, 0);
-    assert.equal(f.historyWrites.length, 0);
-    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
-    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+    assertStoppedBeforeLoad(f);
   });
 
   it('refuses openVote after bot replacement during async lookup', async () => {
@@ -478,10 +480,7 @@ describe('R2-2 stop-generation continuity', () => {
       },
     };
     await f.command('!playlist P', { clid: '1', uid: requester });
-    assert.equal(f.queue.length, 0);
-    assert.equal(f.historyWrites.length, 0);
-    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
-    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+    assertStoppedBeforeLoad(f);
   });
 
   it('refuses openVote after queue clear bumps stopGeneration during clientlist', async () => {
@@ -499,9 +498,7 @@ describe('R2-2 stop-generation continuity', () => {
     };
     await f.command('!playlist P', { clid: '1', uid: requester });
     assert.equal(sawClientlist, true);
-    assert.equal(f.queue.length, 0);
-    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
-    assert.match(f.privateReplies.at(-1) ?? '', /Playback was stopped before the playlist was loaded/i);
+    assertStoppedBeforeLoad(f);
   });
 });
 
