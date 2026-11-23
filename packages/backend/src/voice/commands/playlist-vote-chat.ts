@@ -295,12 +295,40 @@ export async function handleChatPlaylistRequest(
           await saveHistory(context.prisma, bot, start.items);
         },
       });
-      // The expired vote is finished; do not fall through to openVote during cooldown.
+      // Do not claim this request queued tracks when we only settled someone
+      // else's expired vote. Cooldown prevents starting a new vote right now.
+      if (open.requesterUid !== requester.uid || open.playlist.id !== playlist.id) {
+        privateReply(
+          context,
+          bot,
+          clid,
+          'Another playlist vote just ended. Your playlist was not queued; try again after cooldown.',
+          'playlist-request-private',
+        );
+        return true;
+      }
+
+      // Another in-flight timer or request may settle the vote during the
+      // awaited playlist lookup. queued=false does not establish failure;
+      // check the closed outcome for this exact vote ID.
+      const lastVote = runtime.machine.viewForState(
+        botKey,
+        channelId,
+        requester.uid,
+        listeners.map((peer) => peer.uid),
+        context.playlistVoteNow(),
+      );
+      const sameVoteClosed = lastVote?.id === open.id && lastVote.status !== 'open';
+      const passed = settled.queued || (sameVoteClosed && lastVote.status === 'passed');
       privateReply(
         context,
         bot,
         clid,
-        settled.queued ? 'Playlist vote passed — queued.' : 'That playlist vote has ended.',
+        passed
+          ? 'Playlist vote passed — queued.'
+          : sameVoteClosed && lastVote.status === 'failed'
+            ? 'That playlist vote failed.'
+            : 'Your playlist vote has finished processing; check the queue for its result.',
         'playlist-request-private',
       );
       return true;
