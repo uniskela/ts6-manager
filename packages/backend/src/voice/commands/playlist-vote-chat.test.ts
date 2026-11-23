@@ -678,3 +678,53 @@ describe('R2D deadline settlement safety', () => {
     assert.match(f.channelMessages.join('\n'), /not enough yes votes/i);
   });
 });
+
+describe('Kody: expired !playlist lazy settlement', () => {
+  it('reports a queued expired vote without trying to reopen it during cooldown', async () => {
+    // Remote-style vote has no chat deadline timer; the next !playlist settles it.
+    const f = await fixture({ threeListeners: true });
+    f.openVote();
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0, '2/3 yes does not pass yet');
+
+    f.advance(60_000);
+    shrinkElectorateToTwo(f);
+    await f.command('!playlist P', { clid: '1', uid: requester });
+
+    assert.equal(f.queue.length, 2, 'expired vote queued the playlist once');
+    assert.equal(f.historyWrites.length, 2, 'history recorded once per track');
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0, 'no new vote opened');
+    assert.match(f.privateReplies.at(-1) ?? '', /Playlist vote passed.*queued/i);
+    assert.doesNotMatch(f.privateReplies.at(-1) ?? '', /Too many playlist requests/i);
+    assert.equal(
+      f.channelMessages.filter((m) => /Playlist vote passed/i.test(m)).length,
+      1,
+      'one pass announcement',
+    );
+  });
+
+  it('reports an expired failed vote as ended without opening a replacement', async () => {
+    const f = await fixture({ threeListeners: true });
+    f.openVote();
+    f.advance(60_000);
+    await f.command('!playlist P', { clid: '1', uid: requester });
+
+    assertNoQueueOrHistory(f);
+    assert.match(f.channelMessages.join('\n'), /Playlist vote failed/i);
+    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote has ended/i);
+    assert.doesNotMatch(f.privateReplies.at(-1) ?? '', /Too many playlist requests/i);
+  });
+
+  it('keeps late lazy settlement fail-closed and never reopens the expired vote', async () => {
+    const f = await fixture({ threeListeners: true });
+    f.openVote();
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    f.advance(60_000 + DEADLINE_SETTLE_GRACE_MS + 1);
+    shrinkElectorateToTwo(f);
+    await f.command('!playlist P', { clid: '1', uid: requester });
+
+    assertNoQueueOrHistory(f);
+    assert.match(f.channelMessages.join('\n'), /playlist unavailable/i);
+    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote has ended/i);
+  });
+});
