@@ -703,7 +703,7 @@ describe('Kody: expired !playlist lazy settlement', () => {
     );
   });
 
-  it('reports an expired failed vote as ended without opening a replacement', async () => {
+  it('reports an expired failed vote accurately without opening a replacement', async () => {
     const f = await fixture({ threeListeners: true });
     f.openVote();
     f.advance(60_000);
@@ -711,7 +711,7 @@ describe('Kody: expired !playlist lazy settlement', () => {
 
     assertNoQueueOrHistory(f);
     assert.match(f.channelMessages.join('\n'), /Playlist vote failed/i);
-    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote has ended/i);
+    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote failed/i);
     assert.doesNotMatch(f.privateReplies.at(-1) ?? '', /Too many playlist requests/i);
   });
 
@@ -725,7 +725,7 @@ describe('Kody: expired !playlist lazy settlement', () => {
 
     assertNoQueueOrHistory(f);
     assert.match(f.channelMessages.join('\n'), /playlist unavailable/i);
-    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote has ended/i);
+    assert.match(f.privateReplies.at(-1) ?? '', /That playlist vote failed/i);
   });
 });
 
