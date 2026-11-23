@@ -31,7 +31,7 @@ For the rollback procedure, the backup must be a stopped-volume archive and must
 
 After upgrading:
 
-- Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting). TeamSpeak chat controls such as `!playlistvote` remain part of this release where already on `main`.
+- Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting). TeamSpeak chat controls such as `!playlistvote` remain part of this release where already on `main`. With playlist voting on, chat `!playlist` requests open a vote instead of queueing immediately.
 - The remote remains its own page; reverse-proxy and `TRUST_PROXY` guidance from 1.11.x still apply ([Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits)).
 - Auto-Rank online time is now counted from clientinfo, so ranks are assigned on TeamSpeak 6 and TeamSpeak 3. The first check after updating credits each online client's current session in full, so some promotions may happen at once. Time from sessions that ended before the update was never recorded and is not recovered.
 - No isolated media-fetcher is required for v1.12.0. LAN and other private-network radio stations are blocked unless their host is on the administrator **Local hosts** allowlist, which applies to radio sources only. See [Media bots — Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network) and [Security — Radio stations](security.md#radio-stations).
