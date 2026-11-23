@@ -4,7 +4,11 @@ import { DEFAULT_PLAYLIST_VOTE_SETTINGS } from '@ts6/common';
 import { PlayQueue, type QueueItem } from '../playlist/queue.js';
 import { ListenerRemoteService } from '../listener-remote.js';
 import { bindPlaylistVoteLifecycle } from '../playlist-vote/lifecycle.js';
-import { PlaylistVoteRuntime } from '../playlist-vote/runtime.js';
+import {
+  DEADLINE_SETTLE_GRACE_MS,
+  PlaylistVoteRuntime,
+} from '../playlist-vote/runtime.js';
+import { settleExpiredPlaylistVote } from '../playlist-vote/approval-settle.js';
 import { playlistVoteSettingsKey } from '../playlist-vote-settings.js';
 import { mediaCommandPermissionsKey } from '../media-command-permissions.js';
 import { MusicCommandHandler, resetChatReplyCooldownsForTests } from '../music-command-handler.js';
@@ -161,7 +165,7 @@ async function fixture(opts: {
 
   return {
     bot, queue, runtime, privateReplies, channelMessages, historyWrites, playlist, openVote, command, handler,
-    manager,
+    manager, prisma,
     now: () => now,
     advance: (ms: number) => { now += ms; },
   };
@@ -513,5 +517,164 @@ describe('R2-3 sole-listener queue-full reply', () => {
     assert.match(f.channelMessages.join('\n'), /queue full/i);
     assert.match(f.privateReplies.at(-1) ?? '', /The queue is full/i);
     assert.ok(!(f.privateReplies.at(-1) ?? '').includes('vote started'));
+  });
+});
+
+describe('R2D deadline settlement safety', () => {
+  it('fail-closes when playlist reload throws at the deadline (R2D-1)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 1);
+
+    const originalFind = f.prisma.playlist.findFirst.bind(f.prisma.playlist);
+    f.prisma.playlist.findFirst = async () => {
+      throw new Error('db unavailable during restash');
+    };
+
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    f.prisma.playlist.findFirst = originalFind;
+
+    assertNoQueueOrHistory(f);
+    assert.match(f.channelMessages.join('\n'), /playlist unavailable/i);
+
+    const announces = f.channelMessages.length;
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.channelMessages.length, announces, 'result announced exactly once');
+  });
+
+  it('does not mutate a cancelled or replaced vote after a settlement exception (R2D-1)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    const open = f.runtime.machine.getOpen('4', '8');
+    assert.ok(open);
+
+    f.runtime.cancelChatDeadlineSettlement('4', '8');
+    let settleCalls = 0;
+    f.runtime.scheduleChatDeadlineSettlement({
+      botKey: '4',
+      channelId: '8',
+      voteId: open.id,
+      deadlineMs: open.deadlineMs,
+      getNow: () => f.now(),
+      settle: async () => {
+        settleCalls += 1;
+        f.runtime.cancelBotUnavailable(4, f.now());
+        throw new Error('settle blew up after cancel');
+      },
+    });
+
+    f.advance(60_000);
+    const before = f.channelMessages.length;
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(settleCalls, 1);
+    assert.equal(f.runtime.machine.listOpenForBot('4').length, 0);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
+    // cancelBotUnavailable already announced cancelled; exception must not add a failed result.
+    assert.equal(
+      f.channelMessages.slice(before).filter((m) => /failed/i.test(m)).length,
+      0,
+    );
+  });
+
+  it('treats a slow listener lookup past grace as unavailable (R2D-2)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+
+    f.handler.eventBridge = {
+      executeCommand: async () => {
+        // Lookup begins on time but finishes beyond the grace window.
+        f.advance(DEADLINE_SETTLE_GRACE_MS + 1);
+        return (
+          `clid=1 cid=8 client_type=0 client_unique_identifier=${requester}`
+          + `|clid=2 cid=8 client_type=0 client_unique_identifier=${peer}`
+          + '|clid=99 cid=8 client_type=0 client_unique_identifier=bot\nerror id=0 msg=ok'
+        );
+      },
+    };
+
+    f.advance(60_000);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assertNoQueueOrHistory(f);
+    assert.match(f.channelMessages.join('\n'), /playlist unavailable/i);
+  });
+
+  it('allows a timely verified electorate to pass at the deadline (R2D-2)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    assert.equal(f.queue.length, 0);
+
+    f.advance(60_000);
+    shrinkElectorateToTwo(f);
+    await f.runtime.runDueChatDeadlineSettlements(f.now());
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    assert.match(f.channelMessages.join('\n'), /Playlist vote passed/i);
+  });
+
+  it('timer and ballot concurrency cannot double-queue (R2D)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    await f.command('!playlistvote yes', { clid: '2', uid: peer });
+    f.advance(60_000);
+    shrinkElectorateToTwo(f);
+
+    await Promise.all([
+      f.runtime.runDueChatDeadlineSettlements(f.now()),
+      f.command('!playlistvote yes', { clid: '2', uid: peer }),
+    ]);
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    const passAnnounces = f.channelMessages.filter((m) => /Playlist vote passed/i.test(m));
+    assert.equal(passAnnounces.length, 1);
+  });
+
+  it('fires the real unref deadline timer without runDue (R2D)', async () => {
+    const f = await fixture({ threeListeners: true });
+    await f.command('!playlist P', { clid: '1', uid: requester });
+    const open = f.runtime.machine.getOpen('4', '8');
+    assert.ok(open);
+
+    // Fake clock past the vote deadline; replace the 60s wall timer with delay-0 setTimeout.
+    f.advance(60_000);
+    f.runtime.cancelChatDeadlineSettlement('4', '8');
+    f.runtime.scheduleChatDeadlineSettlement({
+      botKey: '4',
+      channelId: '8',
+      voteId: open.id,
+      deadlineMs: open.deadlineMs,
+      getNow: () => f.now(),
+      settle: async (nowMs) => {
+        await settleExpiredPlaylistVote({
+          runtime: f.runtime,
+          botId: 4,
+          channelId: 8,
+          serverConfigId: 2,
+          listenerUids: [requester, peer, third],
+          maxTracks: 25,
+          nowMs,
+          announceBot: f.bot,
+          loadPlaylist: async () => f.playlist as any,
+        });
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('real timer did not fire')), 200);
+      const poll = setInterval(() => {
+        if (f.runtime.machine.listOpenForBot('4').length === 0) {
+          clearInterval(poll);
+          clearTimeout(t);
+          resolve();
+        }
+      }, 5);
+    });
+
+    assertNoQueueOrHistory(f);
+    assert.match(f.channelMessages.join('\n'), /not enough yes votes/i);
   });
 });

@@ -124,10 +124,9 @@ function scheduleChatDeadline(
     getNow: () => context.playlistVoteNow(),
     settle: async (nowMs) => {
       // Stale timer after cancel/replace: vote id check lives in the runtime fire path.
-      // A substantially delayed callback must not approve against a later electorate (R2-1).
-      const late = nowMs > input.deadlineMs + DEADLINE_SETTLE_GRACE_MS;
+      // Grace is rechecked after the async lookup so a slow clientlist cannot approve (R2D-2).
       let listenerUids: readonly string[] | null = null;
-      if (!late && context.eventBridge) {
+      if (nowMs <= input.deadlineMs + DEADLINE_SETTLE_GRACE_MS && context.eventBridge) {
         const excluded = context.musicBotClidsOnServer(input.configId, input.sid);
         excluded.add(bot.ts3ClientId);
         const listeners = await listHumanMediaListeners(
@@ -137,6 +136,10 @@ function scheduleChatDeadline(
         );
         listenerUids = listeners ? listeners.map((peer) => peer.uid) : null;
       }
+      const settleNow = Math.max(nowMs, context.playlistVoteNow());
+      if (settleNow > input.deadlineMs + DEADLINE_SETTLE_GRACE_MS) {
+        listenerUids = null;
+      }
       await settleExpiredPlaylistVote({
         runtime,
         botId: settleBotId,
@@ -144,7 +147,7 @@ function scheduleChatDeadline(
         serverConfigId: input.configId,
         listenerUids,
         maxTracks: input.maxTracks,
-        nowMs,
+        nowMs: settleNow,
         announceBot: bot,
         loadPlaylist: (serverConfigId, id) => loadPlaylist(context.prisma, serverConfigId, id),
         onQueued: async (start) => {
@@ -154,6 +157,16 @@ function scheduleChatDeadline(
       });
     },
   });
+}
+
+/** Electorate for an already-expired vote: null when past the deadline grace window (R2D-2). */
+function electorateForExpiredSettle(
+  deadlineMs: number,
+  settleNowMs: number,
+  listenerUids: readonly string[],
+): readonly string[] | null {
+  if (settleNowMs > deadlineMs + DEADLINE_SETTLE_GRACE_MS) return null;
+  return listenerUids;
 }
 
 /** Start the B3 whole-playlist request lifecycle for chat `!playlist <name>`. */
@@ -259,23 +272,30 @@ export async function handleChatPlaylistRequest(
   }
 
   const open = runtime.machine.getOpen(botKey, channelId);
-  if (open && nowMs >= open.deadlineMs) {
-    runtime.cancelChatDeadlineSettlement(botKey, channelId);
-    await settleExpiredPlaylistVote({
-      runtime,
-      botId: bot.currentConfig.id,
-      channelId: channelIdNum,
-      serverConfigId: configId,
-      listenerUids: listeners.map((peer) => peer.uid),
-      maxTracks: settings.maxRequestSize,
-      nowMs,
-      announceBot: bot,
-      loadPlaylist: (serverConfigId, id) => loadPlaylist(context.prisma, serverConfigId, id),
-      onQueued: async (start) => {
-        await startCurrentIfIdle(bot, start.item);
-        await saveHistory(context.prisma, bot, start.items);
-      },
-    });
+  if (open) {
+    const settleNow = Math.max(nowMs, context.playlistVoteNow());
+    if (settleNow >= open.deadlineMs) {
+      runtime.cancelChatDeadlineSettlement(botKey, channelId);
+      await settleExpiredPlaylistVote({
+        runtime,
+        botId: bot.currentConfig.id,
+        channelId: channelIdNum,
+        serverConfigId: configId,
+        listenerUids: electorateForExpiredSettle(
+          open.deadlineMs,
+          settleNow,
+          listeners.map((peer) => peer.uid),
+        ),
+        maxTracks: settings.maxRequestSize,
+        nowMs: settleNow,
+        announceBot: bot,
+        loadPlaylist: (serverConfigId, id) => loadPlaylist(context.prisma, serverConfigId, id),
+        onQueued: async (start) => {
+          await startCurrentIfIdle(bot, start.item);
+          await saveHistory(context.prisma, bot, start.items);
+        },
+      });
+    }
   }
   const current = runtime.machine.getOpen(botKey, channelId);
   if (current && !(current.requesterUid === requester.uid && current.playlist.id === playlist.id)) {
@@ -435,16 +455,17 @@ export async function handlePlaylistVote(
     return;
   }
 
-  if (nowMs >= open.deadlineMs) {
+  const settleNow = Math.max(nowMs, context.playlistVoteNow());
+  if (settleNow >= open.deadlineMs) {
     runtime.cancelChatDeadlineSettlement(botKey, channelId);
     const settled = await settleExpiredPlaylistVote({
       runtime,
       botId: bot.currentConfig.id,
       channelId: channelIdNum,
       serverConfigId: configId,
-      listenerUids,
+      listenerUids: electorateForExpiredSettle(open.deadlineMs, settleNow, listenerUids),
       maxTracks: settings.maxRequestSize,
-      nowMs,
+      nowMs: settleNow,
       announceBot: bot,
       loadPlaylist: (serverConfigId, playlistId) => loadPlaylist(context.prisma, serverConfigId, playlistId),
       onQueued: async (start) => {

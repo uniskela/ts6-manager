@@ -185,7 +185,34 @@ export class PlaylistVoteRuntime {
       await entry.settle(nowMs);
     } catch (err) {
       console.error('[PlaylistVote] Chat deadline settlement failed:', err);
+      // R2D-1: never leave the same expired vote open without a timer.
+      this.failClosedExpiredChatVote(botKey, channelId, entry.voteId, entry.getNow());
     }
+  }
+
+  /**
+   * After a settlement exception: if that exact vote is still open past its
+   * deadline, close fail-closed (unavailable electorate) once — no queue.
+   */
+  private failClosedExpiredChatVote(
+    botKey: string,
+    channelId: string,
+    voteId: string,
+    nowMs: number,
+  ): void {
+    const still = this.machine.getOpen(botKey, channelId);
+    if (still?.id !== voteId || still.status !== 'open') return;
+    if (nowMs < still.deadlineMs) return;
+    const events = this.machine.tickDeadline({
+      botKey,
+      channelId,
+      listenerUids: null,
+      nowMs,
+    });
+    this.clearStash(botKey, channelId);
+    const botId = Number(botKey);
+    const bot = Number.isSafeInteger(botId) ? this.getBot(botId) : null;
+    deliverPlaylistVoteAnnouncements(bot, Number(channelId), events);
   }
 
   stash(botKey: string, channelId: string, pending: Pending): void {
