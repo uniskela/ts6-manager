@@ -133,7 +133,9 @@ Hiding a playlist leaves its songs in the listener remote's library search. Chat
 
 Open **Bot Flows → Chat commands**. **Playlist voting** sits under the built-in command permissions and applies to the server and virtual server chosen in the main server picker. It is stored with that server, not as an environment variable. Voting stays off until an admin turns it on, including after an upgrade.
 
-Chat `!playlist` appends every track of a saved playlist in one step. The vote and the size limit below apply to a whole-playlist request from the listener remote: the playlist is set to **Request**, and the listener may change the queue.
+When playlist voting is off, chat `!playlist <name>` and `!pl <name>` still queue the playlist straight away. When it is on, that chat request opens the same playlist vote as the listener remote. The playlist is queued, and added to request history, only once the vote passes. A request from the channel's only human listener queues at once. While voting is on, the playlist must allow whole-playlist requests, have eligible tracks, and fit the track limit. The same checks apply to a whole-playlist request from the listener remote: the playlist is set to **Request**, and the listener may change the queue.
+
+**Queue playlists without a vote**, under **Built-in command permissions**, defaults to nobody. An admin grants it to selected TeamSpeak server groups. It does not bypass **Queue and playlist changes**: the person needs both, and the playlist still has to pass the checks above. See [Bot flows — Chat commands](bot-flows.md#chat-commands).
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
@@ -159,7 +161,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!again [id]`** — Replay a stored request by ID, or the most recent request when no ID is given. Adds it to the queue while music is playing or paused. Unavailable files or blocked sources report that the media is no longer available
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue. The list starts just before the current track, and a track keeps its number while older played tracks are removed
 - **`!add <url>`** — Alias for adding to the queue
-- **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List or append a saved playlist
+- **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List saved playlists, or queue one. With [playlist voting](#playlist-voting) on, naming a playlist opens a vote instead of queueing it immediately
 - **`!repeat [off|track|queue]`** — Show or set repeat mode
 - **`!seek <seconds|+seconds|-seconds>`** — Seek within local/downloaded media
 - **`!remove <text>`** — Remove one unambiguous upcoming match
@@ -183,7 +185,7 @@ When a bot is connected to a configured command channel, users in that channel c
 
 Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
 
-Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible, including `!history`; human listeners can still use `!voteskip` and `!playlistvote`, and `!remote` is never restricted (what the remote can do follows the same permissions, see below). `!again` counts as a playback command. [Bot flows — Chat commands](bot-flows.md#chat-commands) lists which group each command belongs to. Denied controls receive a short private reply with a cooldown.
+Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. Those three default to **Everyone** after upgrading. **Queue playlists without a vote** defaults to nobody and does not bypass the queue permission. Help and read-only information stay accessible, including `!history`; human listeners can still use `!voteskip` and `!playlistvote`, and `!remote` is never restricted (what the remote can do follows the same permissions, see below). `!again` counts as a playback command. [Bot flows — Chat commands](bot-flows.md#chat-commands) lists which group each command belongs to. Denied controls receive a short private reply with a cooldown.
 
 ### Several bots in one channel
 
