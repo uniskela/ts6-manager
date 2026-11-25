@@ -95,6 +95,6 @@ CI rebuilds all release images and scans them with Trivy. The release gate fails
 
 ## TeamSpeak Query
 
-TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need beta13 guest Query access.
+TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need the guest Query access that beta13 and later enable by default.
 
-Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for beta13 settings.
+Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for Query settings.

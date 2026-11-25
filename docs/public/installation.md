@@ -78,7 +78,7 @@ pnpm db:generate
 pnpm dev
 ~~~
 
-For a local Docker build **with TeamSpeak 6 (beta13)**:
+For a local Docker build **with TeamSpeak 6 (6.0.0-beta14)**:
 
 ~~~bash
 cp .env.pr-test.example .env

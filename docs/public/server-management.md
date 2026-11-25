@@ -80,6 +80,8 @@ For installation, safe-area behavior, updates, and offline limits, see [Install 
 
 Authenticated SSH Query is used for features that require file-transfer or event access.
 
+On TeamSpeak 6.0.0-beta14, channel file names are UTF-8. Files an older server stored under a non-UTF-8 locale stay hidden in this browser until they are renamed on that server. See [file names](teamspeak-compatibility.md#file-names-on-600-beta14).
+
 The UI includes:
 
 - channel file browsing (create/delete via SSH Query; upload/download still use the TeamSpeak client);

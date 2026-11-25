@@ -1,6 +1,6 @@
 # Local stack for testing a PR branch (builds from the current checkout).
 #
-# Includes a TeamSpeak 6 server (pinned beta13) on the same Docker network as ts6-manager.
+# Includes a TeamSpeak 6 server (pinned 6.0.0-beta14) on the same Docker network as ts6-manager.
 # Backend auto-seeds the bundled connection when LOCAL_DEV_BOOTSTRAP_CONNECTION=1
 # (see .env.pr-test.example). Demo mode remains available separately and is not replaced.
 #
@@ -34,7 +34,7 @@
 
 services:
   teamspeak:
-    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta14
     container_name: ts6-pr-teamspeak
     restart: unless-stopped
     environment:

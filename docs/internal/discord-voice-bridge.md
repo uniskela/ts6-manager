@@ -33,7 +33,7 @@ Companion spec: [superpowers/specs/2026-10-23-discord-voice-bridge-design.md](su
 
 | Side | Contract |
 |---|---|
-| TeamSpeak server | Baseline **6.0.0-beta13** (`teamspeaksystems/teamspeak6-server:6.0.0-beta13`). TS3 servers are in-scope for the same TS3 UDP client if one is available during D1. |
+| TeamSpeak server | Baseline **6.0.0-beta14** (`teamspeaksystems/teamspeak6-server:6.0.0-beta14`). TS3 servers are in-scope for the same TS3 UDP client if one is available during D1. |
 | TeamSpeak voice | Existing TS3 UDP client (EAX). Incoming S2C voice is `VId u16 + speaker CId u16 + codec u8 + Opus` per ReSpeak `ts3protocol`. Live TS6 layout is **unverified** until D1. |
 | TeamSpeak video/WebRTC | Out of path. Do not use the media sidecar. |
 | Discord | Official bot API. Voice is pinned below. Discord required DAVE for voice from 1 March 2026. |
@@ -264,7 +264,7 @@ The smoke is a build gate, not a live receive proof.
 
 Required before the curated v1.12.0 release PR:
 
-- Real **TeamSpeak 6** server (beta13 baseline)
+- Real **TeamSpeak 6** server (6.0.0-beta14 baseline)
 - **Discord desktop**
 - Console Discord: test **Xbox** and **PlayStation** if both are claimed. Fill the table. A claimed console that was not in the run is **unverified** and must not be advertised as tested.
 - DAVE connect, transition, reconnect, and the #11653 join-order case
@@ -285,7 +285,7 @@ Required before the curated v1.12.0 release PR:
 
 | Client | Result | Notes |
 |---|---|---|
-| TeamSpeak 6 (beta13) | | |
+| TeamSpeak 6 (6.0.0-beta14) | | |
 | Discord desktop | | |
 | Discord Xbox | | unverified until tested |
 | Discord PlayStation | | unverified until tested |

@@ -63,7 +63,7 @@ Docker production startup uses `docker-commands/apply-schema.sh` instead of requ
 
 ## Containers
 
-**Full local stack with TeamSpeak 6 (beta13)** — preferred clone / PR happy path:
+**Full local stack with TeamSpeak 6 (6.0.0-beta14)** — preferred clone / PR happy path:
 
 ~~~bash
 cp .env.pr-test.example .env
