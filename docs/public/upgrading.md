@@ -35,6 +35,7 @@ After upgrading:
 - The remote remains its own page; reverse-proxy and `TRUST_PROXY` guidance from 1.11.x still apply ([Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits)).
 - Auto-Rank online time is now counted from clientinfo, so ranks are assigned on TeamSpeak 6 and TeamSpeak 3. The first check after updating credits each online client's current session in full, so some promotions may happen at once. Time from sessions that ended before the update was never recorded and is not recovered.
 - No isolated media-fetcher is required for v1.12.0. LAN and other private-network radio stations are blocked unless their host is on the administrator **Local hosts** allowlist, which applies to radio sources only. See [Media bots — Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network) and [Security — Radio stations](security.md#radio-stations).
+- Viewer accounts lose access to unassigned servers and to administrator-only reads: complaints, messages, instance information, permissions, file listings, server and channel groups, bans, privilege tokens, and the client database. Check each viewer's server assignments. See [Server management — Access control](server-management.md#access-control).
 - Other behaviour may differ from 1.11.x where this release intentionally adds or fixes features (for example bot volume persistence, Listener Remote acknowledgements, and search/duration rules). Read the 1.12.0 release notes for the full list.
 
 Rolling back needs the previous image tag and the matching database backup.
