@@ -7,7 +7,6 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '../../generated/prisma/index.js';
-import { createApp } from '../app.js';
 import { config } from '../config.js';
 import { listen } from './test-support/listen-loopback.js';
 
@@ -23,9 +22,13 @@ let directory: string | undefined;
 let prisma: PrismaClient | undefined;
 let listener: Awaited<ReturnType<typeof listen>> | undefined;
 const upstreamCalls: string[] = [];
+const previousMusicDir = process.env.MUSIC_DIR;
 
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'ts6-viewer-auth-'));
+  process.env.MUSIC_DIR = join(directory, 'music');
+  const { createApp } = await import('../app.js');
+
   const databaseUrl = `file:${join(directory, 'test.db')}`;
   execFileSync(
     process.execPath,
@@ -92,6 +95,8 @@ before(async () => {
 after(async () => {
   await listener?.close();
   await prisma?.$disconnect();
+  if (previousMusicDir === undefined) delete process.env.MUSIC_DIR;
+  else process.env.MUSIC_DIR = previousMusicDir;
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
