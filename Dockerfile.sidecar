@@ -1,4 +1,9 @@
-FROM golang:1.26-bookworm AS build
+# Pinned by digest to the verified Go 1.26.11 toolchain (GOLANG_VERSION=1.26.11).
+# The floating tag could resolve to a toolchain below the GO-2026-6859 /
+# CVE-2026-97054 fix floor, which would ship a vulnerable binary. The digest is
+# a multi-arch index (linux/amd64, linux/arm64, linux/arm/v7, linux/386,
+# linux/ppc64le). Refresh it deliberately and re-run govulncheck. See #693.
+FROM golang:1.26.11-bookworm@sha256:ea47ee45f1284d60f9cc09cb2c3bb4f508c256b640bd8bb30342ff13d1adcb52 AS build
 WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download

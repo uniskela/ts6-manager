@@ -174,7 +174,10 @@ jobs:
   sidecar:
     name: Go sidecar test and vet
     runs-on: ubuntu-latest
-    container: golang:1.26-bookworm
+    # Pinned by digest to the verified Go 1.26.11 toolchain. The floating tag
+    # could resolve below the GO-2026-6859 / CVE-2026-97054 fix floor, so the
+    # tests would run against a vulnerable compiler. See #693.
+    container: golang:1.26.11-bookworm@sha256:ea47ee45f1284d60f9cc09cb2c3bb4f508c256b640bd8bb30342ff13d1adcb52
     timeout-minutes: 10
     defaults:
       run:
@@ -191,6 +194,20 @@ jobs:
         with:
           go-version-file: packages/sidecar/go.mod
           cache-dependency-path: packages/sidecar/go.sum
+
+      # Fail fast if the resolved compiler is below the patched floor, so a
+      # stale cache or a changed go.mod cannot silently reintroduce the CVE.
+      - name: Assert the Go toolchain is patched
+        working-directory: .
+        run: |
+          set -euo pipefail
+          MIN="go1.26.11"
+          GOT="$(go version | awk '{print $3}')"
+          echo "go version: $GOT (minimum $MIN)"
+          if [[ "$(printf '%s\n%s\n' "$MIN" "$GOT" | sort -V | head -n1)" != "$MIN" ]]; then
+            echo "Go toolchain $GOT is below the patched floor $MIN" >&2
+            exit 1
+          fi
 
       - name: Install FFmpeg for playback regression tests
         run: apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg
