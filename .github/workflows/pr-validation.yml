@@ -197,14 +197,17 @@ jobs:
 
       # Fail fast if the resolved compiler is below the patched floor, so a
       # stale cache or a changed go.mod cannot silently reintroduce the CVE.
+      # This job runs in a container whose default shell is sh (dash), so the
+      # check stays POSIX-compatible rather than using bash-only syntax.
       - name: Assert the Go toolchain is patched
         working-directory: .
         run: |
-          set -euo pipefail
+          set -eu
           MIN="go1.26.11"
           GOT="$(go version | awk '{print $3}')"
           echo "go version: $GOT (minimum $MIN)"
-          if [[ "$(printf '%s\n%s\n' "$MIN" "$GOT" | sort -V | head -n1)" != "$MIN" ]]; then
+          LOWEST="$(printf '%s\n%s\n' "$MIN" "$GOT" | sort -V | head -n1)"
+          if [ "$LOWEST" != "$MIN" ]; then
             echo "Go toolchain $GOT is below the patched floor $MIN" >&2
             exit 1
           fi
