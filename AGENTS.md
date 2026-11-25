@@ -107,7 +107,7 @@ Do this **after** the last intended pre-release PR has landed, because a subsequ
 
 ### Local JavaScript toolchain
 
-CI uses Node.js 20 and pnpm 9. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major. Commands and container setup are in [Development](docs/public/development.md).
+CI uses Node.js 20 and the pnpm version in `packageManager` (`pnpm@9.15.9`). Workflows that call `pnpm/action-setup` must not also pass `version`, because the action rejects both. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major. Commands and container setup are in [Development](docs/public/development.md).
 
 ```bash
 corepack enable
