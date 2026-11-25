@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
+import { requireServerAccess } from '../middleware/server-access.js';
 import { AppError, TeamSpeakFloodError } from '../middleware/error-handler.js';
 import { createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
@@ -101,12 +102,14 @@ serverRoutes.post('/demo', requireRole('admin'), async (req: Request, res: Respo
   } catch (err) { next(err); }
 });
 
-// List all configured TS server connections
+// List configured TS server connections visible to the caller
 serverRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const isAdmin = req.user?.role === 'admin';
+    const user = req.user!;
+    const isAdmin = user.role === 'admin';
     const servers = await prisma.tsServerConfig.findMany({
+      where: isAdmin ? undefined : { userAccess: { some: { userId: user.id } } },
       select: {
         id: true, name: true, host: true, webqueryPort: true,
         useHttps: true, sshPort: true, enabled: true, isDemo: true,
@@ -193,7 +196,7 @@ serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response,
 });
 
 // Get server connection details
-serverRoutes.get('/:configId', async (req: Request, res: Response, next) => {
+serverRoutes.get('/:configId', requireServerAccess(), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const server = await prisma.tsServerConfig.findUnique({

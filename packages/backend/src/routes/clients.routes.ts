@@ -316,7 +316,7 @@ clientRoutes.post('/:clid/message', requireRole('admin'), async (req: Request, r
   } catch (err) { next(err); }
 });
 
-clientRoutes.get('/:cldbid/permissions', async (req: Request, res: Response, next) => {
+clientRoutes.get('/:cldbid/permissions', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const result = await getClient(req).execute(getSid(req), 'clientpermlist', {
       cldbid: String(req.params.cldbid), '-permsid': '',
@@ -389,7 +389,7 @@ clientRoutes.delete('/:cldbid/permissions', requireRole('admin'), async (req: Re
   } catch (err) { next(err); }
 });
 
-clientRoutes.get('/:clid/groups', async (req: Request, res: Response, next) => {
+clientRoutes.get('/:clid/groups', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const result = await getClient(req).execute(getSid(req), 'servergroupsbyclientid', {
       cldbid: String(req.params.clid),

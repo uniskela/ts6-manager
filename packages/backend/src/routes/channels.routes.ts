@@ -116,7 +116,7 @@ channelRoutes.post('/:cid/move', requireRole('admin'), async (req: Request, res:
   } catch (err) { next(err); }
 });
 
-channelRoutes.get('/:cid/permissions', async (req: Request, res: Response, next) => {
+channelRoutes.get('/:cid/permissions', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const result = await getClient(req).execute(getSid(req), 'channelpermlist', {
       cid: String(req.params.cid), '-permsid': '',
