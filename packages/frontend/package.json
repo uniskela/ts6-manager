@@ -50,7 +50,7 @@
     "react-router-dom": "^6.30.6",
     "recharts": "^2.13.0",
     "sonner": "^1.7.0",
-    "tailwind-merge": "^2.5.0",
+    "tailwind-merge": "^2.6.2",
     "workbox-core": "7.4.1",
     "workbox-precaching": "7.4.1",
     "workbox-routing": "7.4.1",
