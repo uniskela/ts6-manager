@@ -16,6 +16,22 @@ OUT="${2:-$ROOT/dist/sidecar}"
 SRC="$ROOT/packages/sidecar"
 NAME="ts6-media-sidecar"
 
+# The published archives must be built with a patched compiler. The floor is
+# read from the go.mod directive so it cannot drift from the module, and it
+# matches the GO-2026-6859 / CVE-2026-97054 fix line. See #693.
+GO_MIN="$(awk '$1 == "go" { print "go" $2; exit }' "$SRC/go.mod")"
+if [[ -z "$GO_MIN" ]]; then
+  echo "could not read the go directive from $SRC/go.mod" >&2
+  exit 1
+fi
+GO_ACTUAL="$(go version | awk '{print $3}')"
+echo "==> Go toolchain: $GO_ACTUAL (minimum $GO_MIN)"
+if [[ "$(printf '%s\n%s\n' "$GO_MIN" "$GO_ACTUAL" | sort -V | head -n1)" != "$GO_MIN" ]]; then
+  echo "Go toolchain $GO_ACTUAL is below the patched floor $GO_MIN." >&2
+  echo "Refusing to build release artifacts with an unpatched compiler." >&2
+  exit 1
+fi
+
 # GOOS/GOARCH pairs. The sidecar is pure Go (CGO_ENABLED=0), so one Linux
 # runner builds all of them; the binaries find FFmpeg at run time.
 TARGETS=(

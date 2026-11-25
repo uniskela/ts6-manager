@@ -1,6 +1,10 @@
 module ts6-media-sidecar
 
-go 1.26.9
+// go 1.26.11 is the minimum toolchain with the net/http fix for
+// GO-2026-6859 / CVE-2026-97054 (MaxBytesReader header race -> runtime
+// panic) and the crypto/x509 fix for GO-2026-6809. Do not lower this
+// floor without re-running govulncheck. See #693.
+go 1.26.11
 
 require (
 	github.com/pion/ice/v4 v4.4.9
