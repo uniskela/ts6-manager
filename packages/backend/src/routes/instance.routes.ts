@@ -9,7 +9,7 @@ const getClient = (req: Request) => {
   return pool.getClient(parseInt(String(req.params.configId)));
 };
 
-instanceRoutes.get('/', async (req: Request, res: Response, next) => {
+instanceRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(0, 'instanceinfo', undefined, { priority: 'high' }));
   } catch (err) { next(err); }
@@ -38,13 +38,13 @@ instanceRoutes.put('/', requireRole('admin'), async (req: Request, res: Response
   } catch (err) { next(err); }
 });
 
-instanceRoutes.get('/host', async (req: Request, res: Response, next) => {
+instanceRoutes.get('/host', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(0, 'hostinfo', undefined, { priority: 'high' }));
   } catch (err) { next(err); }
 });
 
-instanceRoutes.get('/version', async (req: Request, res: Response, next) => {
+instanceRoutes.get('/version', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(0, 'version', undefined, { priority: 'high' }));
   } catch (err) { next(err); }

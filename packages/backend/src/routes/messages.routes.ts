@@ -10,11 +10,11 @@ const getClient = (req: Request) => {
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
-messageRoutes.get('/', async (req: Request, res: Response, next) => {
+messageRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try { res.json(await getClient(req).execute(getSid(req), 'messagelist')); } catch (err) { next(err); }
 });
 
-messageRoutes.get('/:msgid', async (req: Request, res: Response, next) => {
+messageRoutes.get('/:msgid', requireRole('admin'), async (req: Request, res: Response, next) => {
   try { res.json(await getClient(req).execute(getSid(req), 'messageget', { msgid: String(req.params.msgid) })); } catch (err) { next(err); }
 });
 

@@ -12,7 +12,7 @@ const getClient = (req: Request) => {
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 const getConnectionId = (req: Request) => parseInt(String(req.params.configId), 10);
 
-channelGroupRoutes.get('/', async (req: Request, res: Response, next) => {
+channelGroupRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try { res.json(await getClient(req).execute(getSid(req), 'channelgrouplist', undefined, { priority: 'high' })); } catch (err) { next(err); }
 });
 
@@ -81,7 +81,7 @@ channelGroupRoutes.delete('/:cgid', requireRole('admin'), async (req: Request, r
   } catch (err) { next(err); }
 });
 
-channelGroupRoutes.get('/:cgid/clients', async (req: Request, res: Response, next) => {
+channelGroupRoutes.get('/:cgid/clients', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(getSid(req), 'channelgroupclientlist', { cgid: String(req.params.cgid) }));
   } catch (err) { next(err); }
@@ -108,7 +108,7 @@ channelGroupRoutes.post('/:cgid/assign', requireRole('admin'), async (req: Reque
   } catch (err) { next(err); }
 });
 
-channelGroupRoutes.get('/:cgid/permissions', async (req: Request, res: Response, next) => {
+channelGroupRoutes.get('/:cgid/permissions', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(getSid(req), 'channelgrouppermlist', { cgid: String(req.params.cgid), '-permsid': '' }));
   } catch (err) { next(err); }
