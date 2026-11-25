@@ -336,6 +336,8 @@ A normal Docker upgrade does not require a separate manual migration command.
 
 Saved WebQuery API keys and SSH passwords remain encrypted in the database and should continue working after a normal restart or image upgrade.
 
-If TeamSpeak reports `invalid apikey`, verify that the server-side API key is still valid. On beta13, changing `TSSERVER_QUERY_ADMIN_API_KEY` replaces the relevant built-in management key, so the saved connection must then be updated.
+If TeamSpeak reports `invalid apikey`, verify that the server-side API key is still valid. On beta13 and later, changing `TSSERVER_QUERY_ADMIN_API_KEY` replaces the relevant built-in management key, so the saved connection must then be updated.
+
+Upgrading the TeamSpeak server to 6.0.0-beta14 does not require a TS6 Manager database change. On Linux and macOS, including the official Docker image, file names are UTF-8 (`LANG=C.UTF-8` in that image). Channel files stored by an older server under a non-UTF-8 locale disappear from the file browser until they are renamed on the TeamSpeak server. Icon and bot-avatar names are ASCII. See [TeamSpeak compatibility](teamspeak-compatibility.md#file-names-on-600-beta14).
 
 See [Troubleshooting](troubleshooting.md) if the new containers do not become healthy.

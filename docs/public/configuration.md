@@ -28,7 +28,7 @@ Open **Settings → Connections** and provide the TeamSpeak host, WebQuery HTTP 
 
 **Test WebQuery** runs staged checks in order: reachability, authentication, **read** permissions, then virtual server access. A complete success confirms management read access only — it does **not** authorize kicks, bans, file changes, or other writes. Those actions still need their own Query permissions and surface failures at the action. The result can be a complete success or a partial success when some stages pass and a later stage does not. **Test SSH** stays a single pass or fail.
 
-For TeamSpeak 6.0.0-beta13, see [TeamSpeak compatibility](teamspeak-compatibility.md) for the recommended Query settings and deterministic admin-key option.
+For TeamSpeak 6.0.0-beta14, see [TeamSpeak compatibility](teamspeak-compatibility.md) for the recommended Query settings and deterministic admin-key option.
 
 ### Persistent WebQuery API keys
 
