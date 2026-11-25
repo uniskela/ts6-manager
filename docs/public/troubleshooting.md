@@ -8,7 +8,7 @@ If TeamSpeak returns `invalid apikey`:
 
 1. confirm the saved connection points to the correct server and port;
 2. verify the server-side key still exists and has management scope;
-3. if you used beta13 `TSSERVER_QUERY_ADMIN_API_KEY`, check whether that value changed; and
+3. if the server uses `TSSERVER_QUERY_ADMIN_API_KEY`, check whether that value changed; and
 4. update the saved connection if the server-side key was replaced.
 
 When manually creating a persistent key, use `lifetime=0` where appropriate.

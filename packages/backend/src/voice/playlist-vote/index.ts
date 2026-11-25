@@ -21,6 +21,7 @@ export type {
 } from './state-machine.js';
 export {
   PlaylistVoteRuntime,
+  DEADLINE_SETTLE_GRACE_MS,
   PLAYLIST_VOTE_WINDOW_MS,
   botKeyFor,
   channelIdFor,

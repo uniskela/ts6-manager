@@ -75,12 +75,12 @@ Plan scenarios from [`91-slice-6-ops-polish.md`](91-slice-6-ops-polish.md). Cove
 
 | Check | Evidence |
 | --- | --- |
-| Pinned image | `docker-compose.pr-test.yml` → `teamspeaksystems/teamspeak6-server:6.0.0-beta13` |
-| Compat workflow default | `.github/workflows/ts6-compat.yml` default tag `6.0.0-beta13` |
+| Pinned image | `docker-compose.pr-test.yml` → `teamspeaksystems/teamspeak6-server:6.0.0-beta14` |
+| Compat workflow default | `.github/workflows/ts6-compat.yml` default tag `6.0.0-beta14` |
 | Native metrics fixture | `packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt` (+ headers / meta); parser tests in `metrics-parse.test.ts` |
 | Operator docs | [teamspeak-compatibility.md](../../public/teamspeak-compatibility.md), [troubleshooting.md](../../public/troubleshooting.md) |
 
-Live pr-test smoke (restricted key, missing SSH, metrics fallback, logs 2052, journal coexistence) remains an operator checklist on a beta13 stack; it is not re-executed by this documentation PR.
+Live pr-test smoke (restricted key, missing SSH, metrics fallback, logs 2052, journal coexistence) remains an operator checklist on the pinned 6.0.0-beta14 stack; it is not re-executed by a documentation-only change.
 
 ### Mobile / responsive
 

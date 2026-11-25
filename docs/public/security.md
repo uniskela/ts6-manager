@@ -19,9 +19,11 @@ Secret fields are not populated back into edit forms. Leaving a secret field bla
 
 ## Authentication
 
-The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply. An administrator password reset, or disabling a user, revokes that account's refresh tokens. An access token that has not expired yet stays valid until it expires.
+The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply.
 
-WebSocket connections require application authentication and are scoped to the servers the user may access.
+An administrator password reset, or disabling a user, revokes that account's refresh tokens so existing sessions cannot be renewed. After a reset the user must sign in again with the new password; a disabled account cannot sign in until an administrator re-enables it. A password reset does **not** immediately invalidate existing access JWTs: they remain valid until they expire (15 minutes by default via `JWT_ACCESS_EXPIRY`). Disabling an account rejects authenticated HTTP requests and new WebSocket connections even when an unexpired access JWT is presented.
+
+WebSocket connections require application authentication when they are established and are scoped to the servers the user may access. Existing WebSocket connections are **not** automatically closed after a password reset, account disable, or permission change. After a password reset, an existing unexpired access JWT may still be used to open a **new** WebSocket connection until that JWT expires.
 
 ## Listener remote
 
@@ -95,6 +97,6 @@ CI rebuilds all release images and scans them with Trivy. The release gate fails
 
 ## TeamSpeak Query
 
-TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need beta13 guest Query access.
+TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need the guest Query access that beta13 and later enable by default.
 
-Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for beta13 settings.
+Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for Query settings.

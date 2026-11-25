@@ -98,4 +98,4 @@ The values below are code defaults. Compose files may override them.
 
 For a native Windows sidecar, set `WEBRTC_UDP_PORT` directly in the Windows process (typically `10000`) and advertise a Windows LAN/Tailscale IPv4 reachable by viewers via `WEBRTC_NAT1TO1_IP`. There is no Docker UDP publication and `WEBRTC_BIND_IP` has no effect on the native process. Permit the HTTP TCP port only from the backend, and the WebRTC UDP port from intended viewers; do not expose the HTTP API publicly. See [AMD AMF (Windows)](video-streaming.md#amd-amf-windows) for supported production deployment and the separate PR-test setup.
 
-TeamSpeak beta13 Query environment variables belong on the TeamSpeak server/container, not on TS6 Manager. See [TeamSpeak compatibility](teamspeak-compatibility.md).
+TeamSpeak Query environment variables belong on the TeamSpeak server/container, not on TS6 Manager. See [TeamSpeak compatibility](teamspeak-compatibility.md). The official 6.0.0-beta14 image sets `LANG=C.UTF-8`; do not override it with a non-UTF-8 locale.
