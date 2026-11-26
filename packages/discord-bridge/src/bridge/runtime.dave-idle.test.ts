@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it, type TestContext } from "node:test";
 import { EndBehaviorType } from "@discordjs/voice";
+import { TsSession } from "../adapters/ts-session.js";
 import { isJoinCancelled } from "../core/join-errors.js";
 import { labDaveDiagnostic } from "../lab/config.js";
+import { BETA_TS_NICKNAME, startListenerPresence } from "../lab/listener-presence.js";
 import { createLogger } from "../core/redact.js";
 import type { Admission } from "../core/voice-admission.js";
 import type { ReadyHandle } from "../testing/fake-voice.js";
@@ -55,6 +57,71 @@ function welcome(h: ReadyHandle): void {
 }
 
 describe("DAVE idle lifecycle (deterministic simulated Discord)", () => {
+  it("displays silent verified humans on the shared TS client using only the already parked Discord bot", async (t) => {
+    const r = setup(t);
+    const { bot } = r.slot;
+    let gatewayReady = true;
+    t.mock.method(bot.client, "isReady", () => gatewayReady);
+    const ts = new TsSession({ host: "127.0.0.1", port: 9987, nickname: BETA_TS_NICKNAME });
+    t.mock.method(ts.client, "getClientId", () => 1);
+    t.mock.method(ts.client, "getCurrentChannelId", () => 2);
+    t.mock.method(ts.client, "getState", () => "connected");
+    const commands = t.mock.method(ts.client, "sendCommand", (command: string) => {
+      ts.client.emit("command", { name: "error", params: { id: "0", return_code: command.split("return_code=")[1] } });
+    });
+    const stop = startListenerPresence(ts, () => r.election.receiver === bot.id ? bot.verifiedVoiceOccupancy() : 0, assert.fail);
+    t.after(stop);
+    const names = () => commands.mock.calls.map(({ arguments: [command] }) => command.split(" return_code=")[0]);
+    const empty = `clientupdate client_nickname=${BETA_TS_NICKNAME}`;
+    const one = String.raw`clientupdate client_nickname=[DC]\s1\sin\svoice`;
+    const two = String.raw`clientupdate client_nickname=[DC]\s2\sin\svoice`;
+
+    await r.rt.start();
+    await drain();
+    await advance(t, 12_000);
+    r.slot.voice("sitter", "channel-1", { member: { bot: false } });
+    r.slot.voice("other-bot", "channel-1", { member: { bot: true } });
+    r.slot.voice("elsewhere", "channel-2", { member: { bot: false } });
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [], "membership without DAVE cannot be displayed");
+
+    const h = r.slot.latest();
+    welcome(h);
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one]);
+    assert.equal(r.rt.router.occupiedSlots(), 0);
+    assert.equal(r.slot.ready.length, 1, "the parked connection was reused");
+    assert.equal(bot.openSubscriptions, 0);
+    assert.deepEqual(r.ts.out, [], "no audio from silent listeners");
+
+    r.slot.voice("unknown", "channel-1");
+    assert.equal(bot.verifiedVoiceOccupancy(), 1, "unknown identity fails closed while the lookup is pending");
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two], "lookup settlement counts a user who never spoke");
+    r.slot.voice("unknown", "channel-2");
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two, one]);
+
+    gatewayReady = false;
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two, one, empty]);
+    gatewayReady = true;
+    await advance(t, 2_000);
+    h.setDave({ ready: false });
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two, one, empty, one, empty]);
+    welcome(h);
+    await advance(t, 2_000);
+    r.slot.voice("sitter", null);
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two, one, empty, one, empty, one, empty]);
+    r.slot.voice("sitter", "channel-1");
+    await advance(t, 2_000);
+    bot.leave();
+    await advance(t, 2_000);
+    assert.deepEqual(names(), [one, two, one, empty, one, empty, one, empty, one, empty]);
+  });
+
   it("empty-channel startup parks the transport beyond 10 s, with both audio boundaries closed", async (t) => {
     const r = setup(t);
     await r.rt.start();

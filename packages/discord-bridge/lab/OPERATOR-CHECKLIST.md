@@ -1,13 +1,16 @@
 # D1 operator checklist (start / stop — no secrets)
 
-Pinned candidate: draft [#504](https://github.com/uniskela/ts6-manager/pull/504) tip `46ce40c9` (verify with `git rev-parse HEAD` before a session).  
+Pinned A–D candidate: draft [#504](https://github.com/uniskela/ts6-manager/pull/504) commit `46ce40c9` (verify with `git rev-parse HEAD` before a session).
+
 Do **not** pass `--confirm` until the owner authorises a live run.
+
+For the separate private-beta listener presence preview, set `SOURCE_COMMIT` to the full SHA in the [OpenCode handover](../../../docs/agents/handover-private-beta-listener-presence-2026-11-26.md). Follow [Private beta](PRIVATE-BETA.md) for the disposable lab first. For a later authorized pilot, set `D1_BRIDGE_IMAGE` to the matching image digest as described in [Private pilot](PRIVATE-PILOT.md).
 
 ## Isolation (required before start)
 
 | Check | Pass |
 |-------|------|
-| Worktree / checkout is `#504` tip | `git rev-parse HEAD` = `46ce40c9…` |
+| Worktree / checkout is the pinned A–D candidate | `git rev-parse HEAD` = `46ce40c9…` |
 | Lab image built | `ts6-discord-bridge-lab:d1-46ce40c9` |
 | Host publish is **not** `0.0.0.0` / `*` | `d1-ts-lab.sh status` → `publish_wildcard=no` |
 | INT-TEST / other stacks undisturbed | If host UDP `19987` is taken (e.g. `ts6-discord-int-teamspeak`), use `D1_TS_LAB_HOST_PORT=19989` (or another free port) |

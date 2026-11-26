@@ -1027,6 +1027,19 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.voiceMemberCounts();
   }
 
+  /** Anonymous display count from the current gateway view, independent of speech admission. */
+  verifiedVoiceOccupancy(): number {
+    const guild = this.client.guilds.cache.get(this.o.guildId);
+    if (!this.healthy || !this.enforced() || !this.client.isReady() || !guild?.available || this.channelOf(this.userId) !== this.o.channelId) {
+      return 0;
+    }
+    let count = 0;
+    for (const state of guild.voiceStates.cache.values()) {
+      if (state.channelId === this.o.channelId && this.humans.isHuman(state.id)) count += 1;
+    }
+    return count;
+  }
+
   /** Same bots-only grant as the DAVE idle park path (voice-state cache plus MLS peers). */
   get knownBotsOnlyChannel(): boolean {
     return this.connection !== null && this.knownBotsOnly(this.connection);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { BETA_TS_NICKNAME, startListenerPresence } from "../lab/listener-presence.js";
 import { TsSession } from "./ts-session.js";
 
 const FLAG_UNENCRYPTED = 0x80;
@@ -52,4 +53,45 @@ describe("TsSession voice vs whisper (real Ts3Client packet path)", () => {
     assert.equal(voice.length, 0);
     assert.equal(session.whisperDropped, 1);
   });
+});
+
+it("holds a refused presence update, retries the latest state, and detaches an in-flight update on stop", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"] });
+  const ts = new TsSession({ host: "127.0.0.1", port: 9987, nickname: BETA_TS_NICKNAME });
+  t.mock.method(ts.client, "getClientId", () => 1);
+  t.mock.method(ts.client, "getCurrentChannelId", () => 2);
+  t.mock.method(ts.client, "getState", () => "connected");
+  const send = t.mock.method(ts.client, "sendCommand", (_command: string) => undefined);
+  const warnings: string[] = [];
+  let count = 1;
+  const stop = startListenerPresence(ts, () => count, (line) => warnings.push(line));
+  t.after(stop);
+  const advance = async (ms: number) => {
+    t.mock.timers.tick(ms);
+    await Promise.resolve();
+  };
+  const reply = (id: string, code: string | undefined) => ts.client.emit("command", { name: "error", params: { id, return_code: code } });
+  const sent = (i: number) => send.mock.calls[i].arguments[0];
+  await advance(2_000);
+  assert.match(sent(0), /^clientupdate client_nickname=\[DC\]/);
+  reply("0", "unrelated");
+  count = 2;
+  await advance(2_000);
+  assert.equal(send.mock.callCount(), 1, "an unrelated reply cannot release an in-flight update");
+  reply("524", sent(0).split("return_code=")[1]);
+  await Promise.resolve();
+  assert.equal(warnings.length, 1);
+  await advance(28_000);
+  assert.equal(send.mock.callCount(), 1);
+  count = 0;
+  await advance(2_000);
+  assert.ok(sent(1).startsWith(`clientupdate client_nickname=${BETA_TS_NICKNAME} `), "the held count is discarded");
+  assert.equal(ts.client.listenerCount("command"), 2);
+  stop();
+  assert.equal(ts.client.listenerCount("command"), 1);
+  assert.equal(ts.client.listenerCount("disconnected"), 0);
+  count = 1;
+  await advance(60_000);
+  assert.equal(send.mock.callCount(), 2);
+  assert.equal(warnings.length, 1);
 });

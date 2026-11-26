@@ -24,6 +24,7 @@ import {
 } from "./beta-status.js";
 import { labDaveDiagnostic, loadLabConfig, presenceReport, requireRuntimeMode } from "./config.js";
 import { Evidence } from "./evidence.js";
+import { BETA_TS_NICKNAME, startListenerPresence } from "./listener-presence.js";
 
 const log = createLogger("d1-private-beta");
 const mode = requireRuntimeMode(process.env, "private-beta");
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
   const ts = new TsSession({
     host: cfg.ts.host,
     port: cfg.ts.port,
-    nickname: "ts6-bridge-d1-beta",
+    nickname: BETA_TS_NICKNAME,
     channel: cfg.ts.channel,
     serverPassword: cfg.ts.password,
   });
@@ -110,6 +111,10 @@ async function main(): Promise<void> {
   runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
   sampler.start(1000);
   await runtime.start();
+  const stopPresence = startListenerPresence(ts, () => {
+    const receiver = election.receiver;
+    return receiver ? concrete.get(receiver)?.verifiedVoiceOccupancy() ?? 0 : 0;
+  }, (line) => log.warn(line));
   pushEvent(events, "bridge_running");
   log.info("private-beta running. Status file: evidence/private-beta-status.json. SIGTERM/SIGINT to stop.");
 
@@ -171,6 +176,7 @@ async function main(): Promise<void> {
   const finish = async (code: number) => {
     if (finishing) return;
     finishing = true;
+    stopPresence();
     clearInterval(tick);
     pushEvent(events, "stopping");
     const snap = snapshot();
@@ -189,10 +195,11 @@ async function main(): Promise<void> {
       buildBetaStatus({ sourceCommit, snap, events, started: true, singleAttempt: diag.singleAttempt }),
     );
     process.stdout.write(`evidence: ${ev.write("private-beta")}\n`);
-    await runtime!.stop();
+    const stopping = runtime!.stop();
+    ts.disconnect();
+    await stopping;
     pushEvent(events, "stopped");
     for (const b of concrete.values()) await b.destroy().catch(() => undefined);
-    ts.disconnect();
     process.exit(code);
   };
   process.on("SIGINT", () => void finish(0));

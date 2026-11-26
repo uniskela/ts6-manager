@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { ClientDirectory } from "../core/client-directory.js";
-import { generateIdentity, Ts3Client } from "./tslib.js";
+import { buildCommand, generateIdentity, Ts3Client, type ParsedCommand } from "./tslib.js";
 
 /** Transport packet types the TS3 UDP client reports for incoming voice. */
 const TS_PACKET_VOICE = 0;
@@ -60,6 +61,34 @@ export class TsSession extends EventEmitter {
 
   get channelId(): number {
     return this.client.getCurrentChannelId();
+  }
+
+  /** Update our own nickname and wait for the correlated server reply. */
+  setNickname(nickname: string, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || this.client.getState() !== "connected") return Promise.resolve(false);
+    const returnCode = `presence-${randomUUID()}`;
+    return new Promise((resolve) => {
+      const settle = (ok: boolean) => {
+        clearTimeout(timer);
+        this.client.off("command", onCommand);
+        this.client.off("disconnected", cancel);
+        signal.removeEventListener("abort", cancel);
+        resolve(ok);
+      };
+      const cancel = () => settle(false);
+      const onCommand = (cmd: ParsedCommand) => {
+        if (cmd.name === "error" && cmd.params.return_code === returnCode) settle(cmd.params.id === "0");
+      };
+      const timer = setTimeout(cancel, 5_000);
+      this.client.on("command", onCommand);
+      this.client.once("disconnected", cancel);
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        this.client.sendCommand(buildCommand("clientupdate", { client_nickname: nickname, return_code: returnCode }));
+      } catch {
+        cancel();
+      }
+    });
   }
 
   sendVoice(opus: Buffer): void {

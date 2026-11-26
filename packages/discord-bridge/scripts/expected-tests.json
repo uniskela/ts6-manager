@@ -189,13 +189,15 @@
   ],
   "src/adapters/ts-session.test.ts": [
     "fails closed when the transport does not say which kind of packet it is",
-    "forwards channel Voice and never forwards VoiceWhisper"
+    "forwards channel Voice and never forwards VoiceWhisper",
+    "holds a refused presence update, retries the latest state, and detaches an in-flight update on stop"
   ],
   "src/bridge/runtime.dave-idle.test.ts": [
     "TeamSpeak membership cancels an unwanted pending join before it can become a receiver",
     "a late human gets a fresh bounded wait and can establish DAVE on the parked connection",
     "a present human without a welcome still times out and permanent budget refusal is logged once across syncs",
     "a returning human without DAVE exhausts the loss grace and fails closed",
+    "displays silent verified humans on the shared TS client using only the already parked Discord bot",
     "empty-channel startup parks the transport beyond 10 s, with both audio boundaries closed",
     "grace expiry reads live DAVE readiness even when the watchdog has not seen restoration",
     "human-first startup elects and undeafens only after an established MLS session",
