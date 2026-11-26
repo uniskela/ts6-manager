@@ -45,7 +45,6 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 * **remote:** preserve queue head when idle playlist vote queues ([#634](https://github.com/uniskela/ts6-manager/issues/634)) ([a36205c](https://github.com/uniskela/ts6-manager/commit/a36205c8db9db200caacdcfa603eec690c44f53b))
 * **remote:** record request history on deadline playlist queue ([#628](https://github.com/uniskela/ts6-manager/issues/628)) ([83d65c7](https://github.com/uniskela/ts6-manager/commit/83d65c76900be712de1e9898cadd8e059ed428fa))
 * **remote:** searchMusic follows the add permission ([#631](https://github.com/uniskela/ts6-manager/issues/631)) ([2b2972e](https://github.com/uniskela/ts6-manager/commit/2b2972e52b9189928a397f80d8d2d778da41a0b6))
-* route in-channel command replies through SSH helper ([806abde](https://github.com/uniskela/ts6-manager/commit/806abdea1454e9b66e1ea992febdc1b7b843fe3f))
 * route in-channel command replies through SSH helper ([cb0d4c0](https://github.com/uniskela/ts6-manager/commit/cb0d4c0ba187cf2ab3113ee8703f57cd6986b59d))
 * **sidecar:** raise the Go toolchain floor past GO-2026-6859 ([#712](https://github.com/uniskela/ts6-manager/issues/712)) ([d45520f](https://github.com/uniskela/ts6-manager/commit/d45520fb17e9fce86090837e08e003ed96be2952)), closes [#693](https://github.com/uniskela/ts6-manager/issues/693)
 
