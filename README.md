@@ -16,32 +16,32 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-**Contents:** [Documentation](#documentation) · [AI agent docs](#using-this-project-with-ai-coding-agents) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility-and-beta13-setup) · [Download progress](#download-progress) · [License](#license)
+**Contents:** [Documentation](#documentation) · [AI agent docs](#using-this-project-with-ai-coding-agents) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility) · [Download progress](#download-progress) · [License](#license)
 
 ## Documentation
 
-The maintained public documentation is available at **[www.uniskela.com/docs/ts6-manager](https://www.uniskela.com/docs/ts6-manager/)** and is sourced from the reviewed Markdown files in [`docs/public/`](docs/public/index.md).
+The maintained public documentation is available at **[ts6manager.com/docs](https://ts6manager.com/docs/)** and is sourced from the reviewed Markdown files in [`docs/public/`](docs/public/index.md).
 
 Start with:
 
-- [Installation](https://www.uniskela.com/docs/ts6-manager/latest/installation/)
-- [Configuration](https://www.uniskela.com/docs/ts6-manager/latest/configuration/)
-- [Upgrading](https://www.uniskela.com/docs/ts6-manager/latest/upgrading/)
-- [TeamSpeak compatibility](https://www.uniskela.com/docs/ts6-manager/latest/teamspeak-compatibility/)
-- [Music bots](https://www.uniskela.com/docs/ts6-manager/latest/music-bots/)
-- [Bot flows](https://www.uniskela.com/docs/ts6-manager/latest/bot-flows/)
-- [Security](https://www.uniskela.com/docs/ts6-manager/latest/security/)
-- [Troubleshooting](https://www.uniskela.com/docs/ts6-manager/latest/troubleshooting/)
-- [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)
-- [Architecture](https://www.uniskela.com/docs/ts6-manager/latest/architecture/)
-- [Environment variables](https://www.uniskela.com/docs/ts6-manager/latest/environment-variables/)
+- [Installation](https://ts6manager.com/docs/latest/installation/)
+- [Configuration](https://ts6manager.com/docs/latest/configuration/)
+- [Upgrading](https://ts6manager.com/docs/latest/upgrading/)
+- [TeamSpeak compatibility](https://ts6manager.com/docs/latest/teamspeak-compatibility/)
+- [Music bots](https://ts6manager.com/docs/latest/music-bots/)
+- [Bot flows](https://ts6manager.com/docs/latest/bot-flows/)
+- [Security](https://ts6manager.com/docs/latest/security/)
+- [Troubleshooting](https://ts6manager.com/docs/latest/troubleshooting/)
+- [Video streaming](https://ts6manager.com/docs/latest/video-streaming/)
+- [Architecture](https://ts6manager.com/docs/latest/architecture/)
+- [Environment variables](https://ts6manager.com/docs/latest/environment-variables/)
 
 
 ### Using this project with AI coding agents
 
 If you use Codex, Cursor, Claude Code, or another assistant with [Context7 MCP](https://context7.com/), you can ask it to consult TS6 Manager's documentation before changing deployment settings or integrations. Context7 is optional; you can always use the maintained docs directly.
 
-> Use Context7 MCP to resolve the official documentation library for `uniskela/ts6-manager` (expected ID: `/uniskela/ts6-manager`), then retrieve guidance for installation, configuration, upgrading, TeamSpeak compatibility, music/video bots, and troubleshooting. Match the guidance to the TS6 Manager version I'm using. If the library is still indexing or doesn't cover that version, check the [maintained documentation](https://www.uniskela.com/docs/ts6-manager/) and linked source files instead.
+> Use Context7 MCP to resolve the official documentation library for `uniskela/ts6-manager` (expected ID: `/uniskela/ts6-manager`), then retrieve guidance for installation, configuration, upgrading, TeamSpeak compatibility, music/video bots, and troubleshooting. Match the guidance to the TS6 Manager version I'm using. If the library is still indexing or doesn't cover that version, check the [maintained documentation](https://ts6manager.com/docs/) and linked source files instead.
 
 ## Screenshots
 
@@ -138,7 +138,7 @@ Compare two to four entities from the same permission layer in a read-only table
 - Live video streaming from YouTube, Twitch, or direct URLs to TeamSpeak channels
 - WebRTC-based with Go sidecar relay (Pion) for low-latency delivery
 - Quality presets (480p, 720p, 1080p)
-- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)); channel browsing, filtering, and music-bot streaming
+- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://ts6manager.com/docs/latest/video-streaming/)); channel browsing, filtering, and music-bot streaming
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
 - Runs as a Docker sidecar container alongside the backend; optional [native binaries](docs/public/native-sidecar.md) are published with each release for host GPU encoders
@@ -304,7 +304,7 @@ Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is publis
 
 ### Building from Source
 
-**Full local stack with TeamSpeak 6 (beta13)** - preferred happy path:
+**Full local stack with TeamSpeak 6 (6.0.0-beta14)** - preferred happy path:
 
 ```bash
 git clone https://github.com/uniskela/ts6-manager.git
@@ -457,11 +457,17 @@ When a music bot is connected to a configured command channel, users there can c
 - SSH ServerQuery access to the TS server when using the file browser, bot flow event triggers, or music-bot channel chat commands
 - `yt-dlp` and `ffmpeg` installed on the backend (included in the Docker image)
 
-## TeamSpeak compatibility and beta13 setup
+## TeamSpeak compatibility
 
-Tested TeamSpeak Server: **6.0.0-beta13** (official image
-`teamspeaksystems/teamspeak6-server:6.0.0-beta13`). Older versions are not
-intentionally excluded; the manual key method below remains available.
+Pinned TeamSpeak Server: **6.0.0-beta14** (official image
+`teamspeaksystems/teamspeak6-server:6.0.0-beta14`). The compatibility workflow
+starts that image. Older versions are not intentionally excluded; the manual
+key method below remains available.
+
+On Linux and macOS, 6.0.0-beta14 treats file names as UTF-8. The official image
+sets `LANG=C.UTF-8`; do not override it. Channel files stored by an older server
+under a non-UTF-8 locale are not listed until they are renamed on that server.
+See [TeamSpeak compatibility](docs/public/teamspeak-compatibility.md#file-names-on-600-beta14).
 
 Configure these on the **TeamSpeak server/container**, not the TS6 Manager container:
 
@@ -472,13 +478,13 @@ TSSERVER_QUERY_SSH_ALLOW_GUEST=0
 TSSERVER_QUERY_ADMIN_API_KEY=<secure-stable-key>
 ```
 
-Beta13 enables guest HTTP/SSH Query access by default. For administrative deployments,
+Since beta13, guest HTTP/SSH Query access is enabled by default. For administrative deployments,
 we recommend explicitly disabling it: TS6 Manager requires authenticated WebQuery
 and uses optional authenticated SSH. Guest access can remain enabled when you
 intentionally want to expose the Guest Server Query permissions; it is not needed
 by this application. Restrict Query ports to trusted management networks.
 
-On beta13+ Docker, `TSSERVER_QUERY_ADMIN_API_KEY` is the simplest deterministic way
+On beta13 and later Docker, `TSSERVER_QUERY_ADMIN_API_KEY` is the simplest deterministic way
 to provision the built-in `serveradmin` management key. Generate a strong key and
 keep it stable. **Changing it replaces the relevant built-in serveradmin management
 API key.** The previously encrypted key in TS6 Manager then stops authenticating;
@@ -495,7 +501,7 @@ apikeyadd scope=manage lifetime=0 ip=0.0.0.0/0
 `lifetime=0` makes the key non-expiring. Narrow the allowed source IP range where
 practical. The bootstrap and manual methods are alternatives, not two required steps.
 
-Beta13 also offers **optional external Prometheus monitoring**. Metrics are disabled
+Since beta13 the server also offers **optional external Prometheus monitoring**. Metrics are disabled
 by default (`TSSERVER_METRICS_ENABLED=0`); the default port is `9187`. The endpoint
 is unauthenticated. Bind it to a restricted interface (`TSSERVER_METRICS_IP`) and
 apply firewall/network restrictions rather than exposing it publicly. Per-packet
@@ -505,7 +511,7 @@ fetches `/metrics` from the configured host/port (defaulting to the WebQuery hos
 to augment the dashboard; keep that listener private and reachable from the backend
 (not localhost-only when the manager is remote).
 
-Server logs default to UTC in beta13. Administrators can select `utc` or `local`
+Server logs default to UTC. Administrators can select `utc` or `local`
 using `TSSERVER_LOG_TIMEZONE`. TS6 Manager displays raw log text without converting
 its timestamps.
 

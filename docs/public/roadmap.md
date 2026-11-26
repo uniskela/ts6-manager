@@ -50,6 +50,7 @@ Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) an
 - Live versus on-demand source mode, with encode-health warnings when encoding stays below realtime.
 - No-viewer auto-stop (default 5 minutes; the browser preview does not count as a viewer).
 - **IPTV header → Local hosts** (administrators only) is an allowlist for LAN IPTV proxies (Threadfin, xTeVe, TVHeadend, and similar). It applies only to playlist refresh, IPTV-page starts, and `!tv`. When the egress proxy is enabled, the sidecar checks every ffmpeg hop against that list.
+- **Radio stations → Local hosts** (administrators only) is the matching allowlist for LAN radio stations. It applies only to stations an administrator configured, and never to a link a user typed. See [Media bots — Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network).
 - Stream start reports a TeamSpeak refusal immediately, holds chat on antiflood error 524, and the sidecar keeps early ICE candidates until the viewer answers.
 - [#204](https://github.com/uniskela/ts6-manager/pull/204) fixes Twitch live URL resolution and browser-preview ICE, with reverse-proxy notes.
 - [#209](https://github.com/uniskela/ts6-manager/pull/209) renames the UI to Media Bots at `/media-bots` (`/music-bots` redirects) and adds encode profiles **Performance / Balanced / Quality**. Profile detail is in [Video streaming — Quality](video-streaming.md#quality).
@@ -128,8 +129,36 @@ Continue validating quality presets, source compatibility, and sidecar/media tra
 
 Shipped streaming work is listed under v1.11.0 above.
 
+### Listener remote growth — v1.12.0
+
+On `main` for the upcoming **1.12.0** release; tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442).
+
+**Owner release sequence (Option B, 2026-11-15):** v1.12.0 ships the changes already on `main` for this release (Listener Remote, music search, playlist voting, session/auth hardening, and related music/UI improvements). Discord Commands & Radio is planned as **v2.0.0**. Discord ↔ TeamSpeak voice bridge D1–D6 is a **later** release. This supersedes the earlier full-scope v1.12.0 plan (10 November 2026).
+
+- The listener remote adds YouTube Music search, browsing of playlists shared with it, a longer-than-15-minutes and no-live rule for search results and pasted links, and **Listener remote** visibility on each playlist. Playlist voting stays off until an admin enables it. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting).
+- The remote is served as its own page. See [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits).
+- PIN sign-in and the installable app stay in v1.12.x ([#464](https://github.com/uniskela/ts6-manager/issues/464)).
+
+### Discord Commands & Radio — v2.0.0 (candidate)
+
+Not released yet. Development and candidate upgrade documentation: draft [#658](https://github.com/uniskela/ts6-manager/pull/658) (Path A; **excludes** unfinished voice-bridge D1).
+
+- Self-hosted Discord slash commands for TeamSpeak status and music/radio (operator-configured; not one-click onboarding).
+- **Breaking for radio (when v2.0.0 ships):** remote radio needs the isolated media-fetcher overlay on a supported Linux/Landlock host; without it, radio fails closed. Station rows are unchanged, but previously saved station URLs may become unsupported under the fetcher port and redirect rules. Follow the upgrade text on [#658](https://github.com/uniskela/ts6-manager/pull/658) until that release lands on `main`.
+- Voice bridging is **not** included. `/ts bridge` stays unavailable until a later bridge release.
+
+### Discord voice bridge — later release
+
+Not released. Not in manager beta images. Not part of v1.12.0 or v2.0.0 under Option B.
+
+A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Laboratory DAVE sessions do not make the bridge a product: remaining live audio and failover rows are still open. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
+
+Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460) or into Commands & Radio.
+
 ## Explicit scope boundaries
 
-The fork currently does not plan to adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.
+The fork does not adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.
 
-Large unrelated suites such as Discord bridges, broad SSO absorption, or opportunistic framework migrations should remain separate decisions.
+SSO absorption and opportunistic framework migrations remain separate decisions.
+
+A supported Discord voice product, if it ships later, stays optional and separate from stable 1.12 / 2.0 Commands & Radio. It does not absorb upstream Discord/SSO/i18n suites.

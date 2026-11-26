@@ -3,6 +3,8 @@ import type {
   BotMediaOverview,
   BotAutomationSettings,
   MediaCommandPermissions,
+  PlaylistRemoteAccess,
+  PlaylistVoteSettings,
   QueueVideoResponse,
   StartVideoStreamRequest,
   VideoQueueState,
@@ -198,6 +200,15 @@ export const radioStationsApi = {
     api.post(`/servers/${configId}/radio-stations/reset-ids`).then((r) => r.data),
 };
 
+// === Playlist vote settings (per connection + virtual server) ===
+
+export const playlistVoteSettingsApi = {
+  get: (configId: number, sid: number): Promise<PlaylistVoteSettings> =>
+    api.get(`/servers/${configId}/playlist-vote-settings/${sid}`).then((r) => r.data),
+  save: (configId: number, sid: number, settings: PlaylistVoteSettings): Promise<PlaylistVoteSettings> =>
+    api.put(`/servers/${configId}/playlist-vote-settings/${sid}`, settings).then((r) => r.data),
+};
+
 // === Custom chat commands (!name → reply) ===
 
 export const chatCommandsApi = {
@@ -229,9 +240,22 @@ export const playlistsApi = {
   list: (serverConfigId?: number) =>
     api.get('/playlists', { params: serverConfigId ? { serverConfigId } : undefined }).then((r) => r.data),
   get: (id: number) => api.get(`/playlists/${id}`).then((r) => r.data),
-  create: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream'; serverConfigId?: number }) =>
-    api.post('/playlists', data).then((r) => r.data),
-  update: (id: number, data: any) => api.put(`/playlists/${id}`, data).then((r) => r.data),
+  create: (data: {
+    name: string;
+    musicBotId?: number;
+    mode?: 'local' | 'stream';
+    remoteAccess?: PlaylistRemoteAccess;
+    serverConfigId?: number;
+  }) => api.post('/playlists', data).then((r) => r.data),
+  update: (
+    id: number,
+    data: {
+      name?: string;
+      musicBotId?: number | null;
+      mode?: 'local' | 'stream';
+      remoteAccess?: PlaylistRemoteAccess;
+    },
+  ) => api.put(`/playlists/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/playlists/${id}`),
   addSong: (id: number, songId: number) => api.post(`/playlists/${id}/songs`, { songId }).then((r) => r.data),
   addSongs: (id: number, songIds: number[]): Promise<{ added: number; alreadyInPlaylist: number }> =>

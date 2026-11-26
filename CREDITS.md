@@ -60,6 +60,17 @@ Issue reports and operator follow-up on `uniskela/ts6-manager` that shaped shipp
 
 Shipped with **v1.8.5** (#184 / #185), **v1.9.0** (#150 / #192) and **v1.9.2** (#202 / #215).
 
+### Shipped scout findings
+
+Fixes from the 2026 ecosystem scout (index [issue #508](https://github.com/uniskela/ts6-manager/issues/508)) that are already in this tree. The author is the person who originated the finding.
+
+| Finding | Original author | What shipped |
+|---------|-----------------|--------------|
+| [F44](https://github.com/uniskela/ts6-manager/issues/693) — Raise the sidecar Go floor past GO-2026-6859 (net/http). Source: [pol4rfuchs/ts6-manager@854bf21](https://github.com/pol4rfuchs/ts6-manager/commit/854bf21) | [@pol4rfuchs](https://github.com/pol4rfuchs) | Sidecar modules and release images build with Go 1.26.11 or newer ([PR #712](https://github.com/uniskela/ts6-manager/pull/712)) |
+| [F45](https://github.com/uniskela/ts6-manager/issues/689) — Viewers can read admin-only server data. Source: [3oD/ts6-manager@0b4cb6e](https://github.com/3oD/ts6-manager/commit/0b4cb6e) | [@3oD](https://github.com/3oD) | Viewer accounts are limited to servers and reads they are allowed to see ([PR #711](https://github.com/uniskela/ts6-manager/pull/711)) |
+
+Shipped in **v1.12.0**.
+
 ### Community forks
 
 | Fork | Author | Commits / area | Adopted in uniskela |
@@ -76,10 +87,10 @@ Shipped with **v1.8.5** (#184 / #185), **v1.9.0** (#150 / #192) and **v1.9.2** (
 | [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager) | [@bro-network](https://github.com/bro-network) | `11bb242`: incremental local/downloaded music playback and reconnect-state ideas, adapted here with bounded buffering, FFmpeg `-re` pacing, and fork-specific safeguards | PR #42 |
 | [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager) | [@bro-network](https://github.com/bro-network) | `49abef5`: resolve the TeamSpeak UDP target once per connection to avoid per-packet DNS resolution | PR #41 |
 
-[joshii-h/ts6-manager](https://github.com/joshii-h/ts6-manager) shares the same author line as coom — credit @coom once; SAML/Discord work intentionally not absorbed.
+[joshii-h/ts6-manager](https://github.com/joshii-h/ts6-manager) shares the same author line as coom — credit @coom once; SAML work and that tree’s Discord implementation are intentionally not absorbed.
 
 Earlier upstream merges that remain in this tree (already present on `main` before the fork work) also credit community contributors such as [@GingerFury6](https://github.com/GingerFury6), [@LemDog](https://github.com/LemDog), and others via the original git history.
 
 ## Not absorbed (intentionally)
 
-Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (Discord bridge, SAML SSO/MFA suite, full multi-language UI) and related requests remain out of scope for this core-focused fork. See [docs/internal/plans/opinionated-fork-roadmap.md](docs/internal/plans/opinionated-fork-roadmap.md).
+Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (that PR’s Discord implementation, SAML SSO/MFA suite, full multi-language UI) are not imported. This fork specifies its own optional Discord voice bridge (disabled by default) in [docs/internal/discord-voice-bridge.md](docs/internal/discord-voice-bridge.md). SSO and full i18n remain out of scope. See [docs/internal/plans/opinionated-fork-roadmap.md](docs/internal/plans/opinionated-fork-roadmap.md).

@@ -1,0 +1,59 @@
+# Informational Semgrep Community Edition scan.
+# Findings must not fail this job and must not be required checks.
+# Scanner/config failures (non-zero semgrep, missing SARIF) still fail the job.
+name: Semgrep CE
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Offset from gitleaks (04:17) and container-security (Monday 04:17).
+    - cron: "41 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: semgrep-ce/scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      # Community Edition image; digest is the multi-arch index for 1.182.0.
+      image: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Semgrep version
+        run: semgrep --version
+
+      - name: Scan with Community Edition rules
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep scan \
+            --metrics=off \
+            --disable-version-check \
+            --oss-only \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --config .semgrep \
+            --sarif-output=semgrep.sarif
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semgrep-${{ github.sha }}
+          path: semgrep.sarif
+          if-no-files-found: error
+          retention-days: 14

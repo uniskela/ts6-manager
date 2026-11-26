@@ -25,9 +25,10 @@ describe('listener remote credentials and lifetime', () => {
     const { token, expiresAt } = service.issue(BINDING);
     assert.match(token, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(expiresAt, 301_000);
-    const { session, binding, expiresAt: sessionExpiry } = await service.exchange(token, allowed);
+    const { session, binding, expiresAt: sessionExpiry, remember } = await service.exchange(token, allowed);
     assert.notEqual(session, token);
-    assert.equal(sessionExpiry, 901_000);
+    assert.equal(remember, false);
+    assert.equal(sessionExpiry, 1_000 + 12 * 60 * 60_000);
     assert.deepEqual(binding, BINDING);
     assert.deepEqual(await service.authenticate(session, allowed), BINDING);
     const state = service as unknown as { grants: Map<string, unknown>; tokens: Map<string, unknown>; sessions: Map<string, unknown> };
@@ -63,15 +64,28 @@ describe('listener remote credentials and lifetime', () => {
     }
   });
 
-  it('expires tokens after five minutes and sessions absolutely after fifteen minutes', async () => {
+  it('expires tokens after five minutes and sessions absolutely after twelve hours', async () => {
     const { service, advance } = fixture();
     const old = service.issue(BINDING);
     advance(5 * 60_000);
     await assert.rejects(service.exchange(old.token, allowed), expired);
     const { session } = await service.exchange(service.issue(BINDING).token, allowed);
-    advance(14 * 60_000);
+    advance(12 * 60 * 60_000 - 60_000);
     await service.authenticate(session, allowed);
     advance(60_000);
+    await assert.rejects(service.authenticate(session, allowed), expired);
+  });
+
+  it('remember option extends absolute session to twenty-four hours', async () => {
+    const { service, advance } = fixture();
+    const { session, expiresAt, remember } = await service.exchange(
+      service.issue(BINDING).token, allowed, { remember: true },
+    );
+    assert.equal(remember, true);
+    assert.equal(expiresAt, 1_000 + 24 * 60 * 60_000);
+    advance(23 * 60 * 60_000);
+    await service.authenticate(session, allowed);
+    advance(60 * 60_000);
     await assert.rejects(service.authenticate(session, allowed), expired);
   });
 

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { EventEmitter } from 'node:events';
 import express, { type Express } from 'express';
 import { musicBotRoutes } from './music-bots.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
+import { saveBotVolume } from '../voice/bot-volume.js';
 
 function buildApp(locals: Record<string, unknown>): Express {
   const app = express();
@@ -31,43 +33,62 @@ async function send(app: Express, method: string, path: string, body: unknown) {
   }
 }
 
+/** Listener saves are fire-and-forget; drain so assertions see completed writes. */
+async function flushSaves() {
+  for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r));
+}
+
 function fixture(
   apply: (v: number) => Promise<void> = async () => {},
   write: (v: number) => Promise<void> = async () => {},
 ) {
   const saved: number[] = [];
   const applied: number[] = [];
-  const bot = {
+  const prisma = {
+    // Records when the write completes, so a slow write lands after a fast one.
+    musicBot: { update: async ({ data }: any) => { await write(data.volume); saved.push(data.volume); return {}; } },
+    adminAuditEvent: {
+      create: async () => ({ id: 1 }),
+      updateMany: async () => ({ count: 1 }),
+    },
+  };
+  // Mirror VoiceBot + VoiceBotManager: no-op skips emit; real changes persist once.
+  const bot = Object.assign(new EventEmitter(), {
     id: 1,
     currentConfig: { id: 1, serverConfigId: 1, volume: 50 },
     async applyVolume(v: number) {
       applied.push(v);
+      if (v === this.currentConfig.volume) {
+        await apply(v);
+        return;
+      }
       this.currentConfig.volume = v;
+      this.emit('volumeChange', v);
       await apply(v);
     },
     async setVideoStreamVolume(v: number) { await this.applyVolume(v); },
     async setVideoSource(_source: string, v?: number) {
-      if (v != null) this.currentConfig.volume = v;
+      if (v == null) return;
+      if (v === this.currentConfig.volume) return;
+      this.currentConfig.volume = v;
+      this.emit('volumeChange', v);
     },
-  };
+  });
+  bot.on('volumeChange', (volume: number) => {
+    void saveBotVolume(prisma, bot.currentConfig.id, volume);
+  });
   const app = buildApp({
-    prisma: {
-      // Records when the write completes, so a slow write lands after a fast one.
-      musicBot: { update: async ({ data }: any) => { await write(data.volume); saved.push(data.volume); return {}; } },
-      adminAuditEvent: {
-        create: async () => ({ id: 1 }),
-        updateMany: async () => ({ count: 1 }),
-      },
-    },
+    prisma,
     voiceBotManager: { getBot: () => bot, on() {}, off() {} },
   });
-  return { app, bot, saved, applied };
+  return { app, bot, saved, applied, prisma };
 }
 
 describe('bot volume routes', () => {
   it('volume 0 mutes instead of falling back to 50', async () => {
     const f = fixture();
     const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 0 });
+    await flushSaves();
     assert.equal(res.status, 200);
     assert.equal(res.body.volume, 0);
     assert.deepEqual(f.applied, [0]);
@@ -97,7 +118,45 @@ describe('bot volume routes', () => {
     assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: ' 25 ' })).body.volume, 25);
     assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 33.6 })).body.volume, 34);
     assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 150 })).body.volume, 100);
+    await flushSaves();
     assert.deepEqual(f.saved, [25, 34, 100]);
+  });
+
+  it('persists a live volume change once (listener write, route only flushes)', async () => {
+    const f = fixture();
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 40 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(f.saved, [40]);
+  });
+
+  it('re-setting the current volume still confirms the DB row', async () => {
+    const f = fixture();
+    f.bot.currentConfig.volume = 50;
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 50 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(f.applied, [50]);
+    assert.deepEqual(f.saved, [50], 'no-op emit must still repair a diverged DB level');
+  });
+
+  it('surfaces a failed volume save as 500 to the HTTP client', async () => {
+    const f = fixture(async () => {}, async () => { throw new Error('disk full'); });
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 40 });
+    assert.equal(res.status, 500);
+    assert.deepEqual(f.applied, [40]);
+  });
+
+  it('saves when no live bot is attached', async () => {
+    const saved: number[] = [];
+    const app = buildApp({
+      prisma: {
+        musicBot: { update: async ({ data }: any) => { saved.push(data.volume); return {}; } },
+        adminAuditEvent: { create: async () => ({ id: 1 }), updateMany: async () => ({ count: 1 }) },
+      },
+      voiceBotManager: { getBot: () => undefined, on() {}, off() {} },
+    });
+    const res = await send(app, 'POST', '/api/music-bots/1/volume', { volume: 18 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(saved, [18]);
   });
 
   it('a slower, superseded request does not overwrite the newer saved level', async () => {
@@ -111,8 +170,11 @@ describe('bot volume routes', () => {
     assert.equal(fast.status, 200);
     release();
     assert.equal((await slow).status, 200);
+    await flushSaves();
     assert.equal(f.bot.currentConfig.volume, 30);
-    assert.deepEqual(f.saved, [30], 'the stale 20 must not be written after 30');
+    // Listener saves on emit (before the slow restart finishes), then 30.
+    assert.deepEqual(f.saved, [20, 30]);
+    assert.equal(f.saved.at(-1), 30, 'the newest level must be last');
   });
 
   it('volume saves for one bot complete in request order', async () => {
@@ -128,15 +190,36 @@ describe('bot volume routes', () => {
     release();
     assert.equal((await slow).status, 200);
     assert.equal((await fast).status, 200);
+    await flushSaves();
     assert.deepEqual(f.saved, [20, 30], 'the newer level must be the last write');
   });
 
   it('saves the new level even when the stream restart fails', async () => {
     const f = fixture(async () => { throw new Error('sidecar down'); });
     const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
+    await flushSaves();
     assert.equal(res.status, 500);
     // Music already plays at 20, so a restart must not see the old level.
     assert.deepEqual(f.saved, [20]);
+  });
+
+  it('keeps the applyVolume error when both restart and save fail', async () => {
+    const logs: string[] = [];
+    const orig = console.error;
+    console.error = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    try {
+      const f = fixture(
+        async () => { throw new Error('sidecar down'); },
+        async () => { throw new Error('disk full'); },
+      );
+      const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
+      assert.equal(res.status, 500);
+      // Bodies are sanitized; the logged primary error must stay the apply failure.
+      assert.ok(logs.some((l) => /\[Error [0-9a-f]+\]/.test(l) && l.includes('sidecar down')));
+      assert.ok(!logs.some((l) => /\[Error [0-9a-f]+\]/.test(l) && l.includes('disk full')));
+    } finally {
+      console.error = orig;
+    }
   });
 
   it('stream volume refuses a non-numeric level with 400', async () => {
@@ -149,6 +232,7 @@ describe('bot volume routes', () => {
   it('stream volume saves the level even when the restart fails', async () => {
     const f = fixture(async () => { throw new Error('sidecar down'); });
     const res = await send(f.app, 'POST', '/api/music-bots/1/stream/volume', { volume: 30 });
+    await flushSaves();
     assert.equal(res.status, 500);
     assert.deepEqual(f.saved, [30]);
   });
@@ -158,6 +242,7 @@ describe('bot volume routes', () => {
     const res = await send(f.app, 'POST', '/api/music-bots/1/stream/source', {
       source: 'https://example.com/live.m3u8', volume: '35',
     });
+    await flushSaves();
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(f.bot.currentConfig.volume, 35);
     assert.deepEqual(f.saved, [35]);

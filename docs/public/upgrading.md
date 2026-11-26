@@ -19,6 +19,151 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Upgrading to 1.12.0
+
+This section covers upgrading from 1.11.4 (or later 1.11.x) to **1.12.0**. Skip it if you are installing fresh.
+
+**Scope.** 1.12.0 ships the changes already on `main` for this release: Listener Remote growth (playlist browse/request, search, playlist voting), music search and related music/UI improvements, session/auth hardening, and other non-breaking fixes already represented in the Release Please notes. It does **not** ship Discord Commands & Radio (draft [#658](https://github.com/uniskela/ts6-manager/pull/658)) or the Discord ↔ TeamSpeak voice bridge.
+
+**Back up the database before starting the 1.12.0 backend.** Stop the backend, then copy its persistent data volume (`ts6webui.db`, journal/WAL files, uploaded IPTV playlists, bot avatars, hosted channel banners) and keep the previous image tag until the upgrade is verified.
+
+For the rollback procedure, the backup must be a stopped-volume archive and must be restored into a **new empty volume**. Do not restore a database file into the volume that the 1.12.0 backend used: the 1.12.0 schema is still in that volume and can be mistaken for the old backup. The exact commands are under [Rolling back from 1.12.0 to 1.11.4](#rolling-back-from-1120-to-1114).
+
+After upgrading:
+
+- Listener remote playlist visibility and voting follow the admin settings described in [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting). TeamSpeak chat controls such as `!playlistvote` remain part of this release where already on `main`. With playlist voting on, chat `!playlist` requests open a vote instead of queueing immediately.
+- The remote remains its own page; reverse-proxy and `TRUST_PROXY` guidance from 1.11.x still apply ([Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits)).
+- Auto-Rank online time is now counted from clientinfo, so ranks are assigned on TeamSpeak 6 and TeamSpeak 3. The first check after updating credits each online client's current session in full, so some promotions may happen at once. Time from sessions that ended before the update was never recorded and is not recovered.
+- No isolated media-fetcher is required for v1.12.0. LAN and other private-network radio stations are blocked unless their host is on the administrator **Local hosts** allowlist, which applies to radio sources only. See [Media bots — Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network) and [Security — Radio stations](security.md#radio-stations).
+- Viewer accounts lose access to unassigned servers and to administrator-only reads: complaints, messages, instance information, permissions, file listings, server and channel groups, bans, privilege tokens, and the client database. Check each viewer's server assignments. See [Server management — Access control](server-management.md#access-control).
+- Other behaviour may differ from 1.11.x where this release intentionally adds or fixes features (for example bot volume persistence, Listener Remote acknowledgements, and search/duration rules). Read the 1.12.0 release notes for the full list.
+
+Rolling back needs the previous image tag and the matching database backup.
+
+#### Rolling back from 1.12.0 to 1.11.4
+
+1.12.0 adds the `Playlist.remoteAccess` column. The 1.11.4 image cannot safely reconcile a database that already contains that column because Prisma refuses to drop it while it holds data. Therefore, roll back by restoring the **pre-upgrade** database into a **new empty volume**; do not point the old image at the upgraded volume and do not use `prisma db push --accept-data-loss`.
+
+Use the same `JWT_SECRET`, `ENCRYPTION_KEY` and `SIDECAR_SECRET` as before the upgrade. The examples below use Docker Compose with the stock `backend-data` volume. Adjust the project and volume names to match the installation. **The archive in step 3 must be taken before the first v1.12.0 startup**, while the database still has its v1.11.4 schema; a backup made after upgrade cannot be used to roll back safely.
+
+In a Bash shell, set both names to the **actual** volume names shown by `docker compose config` / `docker volume ls`. Replace the example values before executing any command, and use the same shell session for subsequent commands:
+
+~~~bash
+BACKEND_VOLUME='REPLACE_WITH_EXISTING_BACKEND_VOLUME_NAME'
+ROLLBACK_VOLUME='REPLACE_WITH_NEW_ROLLBACK_VOLUME_NAME'
+# Reject placeholders and empty names independently (an empty ROLLBACK_VOLUME must
+# not slip through after BACKEND_VOLUME is filled in).
+case "$BACKEND_VOLUME" in
+  ''|*REPLACE_WITH*)
+    echo 'Set BACKEND_VOLUME to the existing backend data volume name first' >&2
+    exit 1
+    ;;
+esac
+case "$ROLLBACK_VOLUME" in
+  ''|*REPLACE_WITH*)
+    echo 'Set ROLLBACK_VOLUME to a new empty rollback volume name first' >&2
+    exit 1
+    ;;
+esac
+test "$BACKEND_VOLUME" != "$ROLLBACK_VOLUME" || { echo 'Rollback volume must be different' >&2; exit 1; }
+# Abort immediately when the source volume is missing so Docker cannot create an
+# unintended empty volume during a later -v bind and look like a successful backup.
+docker volume inspect "$BACKEND_VOLUME" >/dev/null 2>&1 || {
+  echo "BACKEND_VOLUME '$BACKEND_VOLUME' was not found; refusing to continue" >&2
+  exit 1
+}
+if docker volume inspect "$ROLLBACK_VOLUME" >/dev/null 2>&1; then
+  echo 'Choose a NEW rollback volume name; an existing volume may contain upgraded files' >&2
+  exit 1
+fi
+~~~
+
+
+**1. Stop every service that can open the database.** This prevents SQLite journal/WAL files from changing while the backup is copied:
+
+~~~bash
+docker compose stop
+~~~
+
+**2. Identify the backend volume and confirm the database path.** The stock split image stores SQLite at `/app/packages/backend/data/ts6webui.db` inside the backend data volume. Record the volume name shown by `docker compose config` or `docker volume ls`.
+
+**3. Archive the complete stopped backend data volume.** Include `ts6webui.db`, any `-wal` / `-shm` / journal companion files, `.schema-version`, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the archive and its checksum outside the backend volume:
+
+~~~bash
+docker volume ls
+docker run --rm \
+  -v "$BACKEND_VOLUME:/data:ro" \
+  -v "${PWD}:/backup" \
+  alpine sh -c 'cd /data && tar czf /backup/ts6-backend-data-v1.11.4.tgz .'
+sha256sum ts6-backend-data-v1.11.4.tgz > ts6-backend-data-v1.11.4.tgz.sha256
+~~~
+
+Do not skip the checksum: it proves that the archive restored later is the same stopped-volume archive.
+
+**4. Upgrade to 1.12.0 with the normal Compose files**, then verify the upgrade before continuing. Keep the old image tag and the archive from step 3.
+
+**5. Before rolling back, stop the 1.12.0 services again** so no process has the upgraded database open:
+
+~~~bash
+docker compose stop
+~~~
+
+**6. Create a new empty backend volume and restore the archive into it.** Do not extract the archive over the upgraded volume: that can leave the upgraded database or WAL/journal files in place.
+
+~~~bash
+docker volume create "$ROLLBACK_VOLUME"
+docker run --rm \
+  -v "$ROLLBACK_VOLUME:/restore" \
+  -v "${PWD}:/backup:ro" \
+  alpine sh -ec 'cd /backup && sha256sum -c ts6-backend-data-v1.11.4.tgz.sha256 && cd /restore && tar xzf /backup/ts6-backend-data-v1.11.4.tgz'
+~~~
+
+The checksum command must report `OK` **before extraction**, from `/backup` where the archive actually exists. The restored volume must contain the archive's `.schema-version` and `ts6webui.db`; it must not contain an upgraded database or upgraded WAL/journal companion.
+
+**7. Point the old Compose configuration at the new rollback volume.** In the Compose file, change the backend data mount to the rollback volume while keeping the music volume and all secrets unchanged:
+
+~~~yaml
+# Illustrative excerpt: make these edits in the EXISTING Compose file.
+# Preserve every other backend mount, service setting, and existing volume.
+services:
+  backend:
+    volumes:
+      - backend-data-rollback:/app/packages/backend/data
+      - music-data:/data/music
+
+# Add this entry under your ONE existing top-level "volumes:" section.
+volumes:
+  backend-data-rollback:
+    external: true
+    name: your_new_rollback_volume_name
+~~~
+
+Replace `your_new_rollback_volume_name` with the value of `ROLLBACK_VOLUME`. Do not paste this excerpt as a replacement for the complete Compose file or create a second top-level `volumes:` section. If you use a Compose override, verify that it **replaces** the original backend data mount rather than adding a second mount at the same target.
+
+If the deployment uses an externally managed volume, update that volume mapping instead. Confirm the effective mount before starting:
+
+~~~bash
+docker compose config
+docker compose run --rm --no-deps --entrypoint sh backend -c '
+  echo "DATABASE_URL=$DATABASE_URL"
+  ls -la data
+  cat data/.schema-version
+'
+~~~
+
+For a 1.11.4 backup, `.schema-version` must be `2026.10.10-music-request-history`. The `Playlist` table must not contain `remoteAccess`. A read-only check can be made with any SQLite-capable image; the important checks are that the old marker is present and the new column is absent.
+
+**8. Restore the old image tag and start the stack.** The 1.11.4 startup must log `mode=reconcile`, report that the database is already in sync, and record the 1.11.4 schema version. Do not add `--accept-data-loss`, run an ad-hoc `ALTER TABLE`, or let the old image reconcile the upgraded database.
+
+~~~bash
+docker compose up -d
+docker compose logs backend
+~~~
+
+**9. Verify the rollback.** Sign in with the pre-upgrade admin account, confirm saved playlists and connections are present, and start the music bot to confirm the TeamSpeak service reconnects. Only after those checks should the upgraded backend volume be removed. Keep both backups until the rollback is accepted.
+
+This procedure was validated on 18 November 2026 with disposable Docker volumes: a v1.11.4 database was archived while stopped, upgraded to the v1.12.0 candidate, restored into a new empty volume, inspected before startup, and then started successfully on v1.11.4 without data-loss flags or manual schema changes.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.
@@ -84,18 +229,23 @@ For the split image, a peer with a private address that connects straight to the
 **Breaking change if a media source lives on a `100.64.0.0/10` address**, which includes Tailscale hosts and carrier-grade NAT. 1.10.x reached those addresses without asking. 1.11.0 treats them like private addresses and refuses them until an admin allows the host.
 
 - **IPTV playlists and channels**: add the hostname, IP or a narrow range under **IPTV → Local hosts**, then refresh the playlist. See [Playlists and channels on your local network](video-streaming.md#playlists-and-channels-on-your-local-network).
-- **Pasted links, `!play` and `!stream` links, radio station URLs and Bot Flow HTTP requests** to those addresses cannot be allowed. Serve the media through an allowed IPTV playlist or from a publicly reachable address instead.
+- **Radio stations**: add the hostname, IP or a narrow range under **Radio stations → Local hosts**, then add the station (or save its edit) again. See [Radio stations on your local network](music-bots.md#radio-stations-on-your-local-network).
+- **Pasted links, `!play` and `!stream` links, and Bot Flow HTTP requests** to those addresses cannot be allowed. Serve the media through an allowed IPTV playlist or radio station, or from a publicly reachable address instead.
 
 Cloud metadata addresses stay blocked even when listed.
 
 ### Upgrading to 1.11.2
+
+#### TeamSpeak client 6.0.0-beta5
+
+- **Viewers.** The TeamSpeak client 6.0.0-beta5 does not answer a stream offer from a sidecar older than 1.11.2, so nobody can watch while the web preview still plays. Upgrade the media sidecar with the backend to 1.11.2 or newer. See [Troubleshooting](troubleshooting.md#teamspeak-600-beta5-never-answers-a-stream).
 
 #### Media downloads go through a checking proxy
 
 **Breaking change for some setups** (an outbound proxy set through `HTTP_PROXY`/`HTTPS_PROXY`, or media on your local network). Every media download (yt-dlp for music and video, and ffmpeg playing a track URL yt-dlp resolved) now connects through a checking proxy inside the backend; see [Security — Media downloads](security.md#media-downloads). There is no schema change and no Compose change. Most links work as before. These changes may affect you:
 
 - **Outbound proxy settings.** Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` from the backend's environment. If the backend can only reach the internet through an outbound proxy, set `MEDIA_UPSTREAM_PROXY=http://host:port`. The backend logs a startup warning when one of the old variables is set and `MEDIA_UPSTREAM_PROXY` is not. The outbound proxy is asked for `CONNECT` tunnels to IP addresses on ports 80 and 443, not host names. A proxy that only allows named domains, or refuses `CONNECT` to port 80, will refuse these requests, and the backend must be able to resolve public DNS names itself.
-- **Links to your local network.** Pasted links, `!play` links and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance; radio is unchanged.
+- **Links to your local network.** Pasted links, `!play` links and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance; radio stations have their own **Radio stations → Local hosts** allowance.
 - **Ports other than 80 and 443.** Media hosted on another port, such as `https://media.example.com:8443/track.mp3`, is refused.
 - **Formats that are not HTTP.** Sources that offer only RTMP, RTSP, MMS or similar streams are refused. HTTP(S), HLS and DASH work. The few HTTPS streams that yt-dlp can only download by handing them to ffmpeg are refused too.
 - **yt-dlp configuration files.** Media downloads ignore yt-dlp configuration files and plugin folders on the host. On a native install, options you set in a yt-dlp config file no longer apply; cookies still come from **Settings → YouTube** or `YT_COOKIE_FILE`. A native install needs a yt-dlp at least as new as the version pinned in `.yt-dlp-version`; older releases lack options the backend now passes, and every download then fails.
@@ -187,6 +337,8 @@ A normal Docker upgrade does not require a separate manual migration command.
 
 Saved WebQuery API keys and SSH passwords remain encrypted in the database and should continue working after a normal restart or image upgrade.
 
-If TeamSpeak reports `invalid apikey`, verify that the server-side API key is still valid. On beta13, changing `TSSERVER_QUERY_ADMIN_API_KEY` replaces the relevant built-in management key, so the saved connection must then be updated.
+If TeamSpeak reports `invalid apikey`, verify that the server-side API key is still valid. On beta13 and later, changing `TSSERVER_QUERY_ADMIN_API_KEY` replaces the relevant built-in management key, so the saved connection must then be updated.
+
+Upgrading the TeamSpeak server to 6.0.0-beta14 does not require a TS6 Manager database change. On Linux and macOS, including the official Docker image, file names are UTF-8 (`LANG=C.UTF-8` in that image). Channel files stored by an older server under a non-UTF-8 locale disappear from the file browser until they are renamed on the TeamSpeak server. Icon and bot-avatar names are ASCII. See [TeamSpeak compatibility](teamspeak-compatibility.md#file-names-on-600-beta14).
 
 See [Troubleshooting](troubleshooting.md) if the new containers do not become healthy.

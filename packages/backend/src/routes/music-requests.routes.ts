@@ -5,6 +5,7 @@ import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { createPlayUrlHandler } from './music-bots.routes.js';
 import { defaultMediaUrlDeps } from '../voice/media-url-pipeline.js';
+import { radioLocalAllowlist } from '../utils/app-settings.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 import {
@@ -76,7 +77,7 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
         || bot.currentConfig.serverPort !== serverPort) throw new AppError(409, 'Bot changed during replay. Try again.');
       if (bot.stopGeneration !== stopGeneration) throw new AppError(409, 'Playback was stopped before the replay started.');
     };
-    const ref = await replayReference(row);
+    const ref = await replayReference(row, { localAllowlist: await radioLocalAllowlist(prisma) });
     assertCurrentBot();
     if (!ref.ok) {
       await markMusicRequestUnavailable(prisma, row.id);

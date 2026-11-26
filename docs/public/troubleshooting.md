@@ -8,7 +8,7 @@ If TeamSpeak returns `invalid apikey`:
 
 1. confirm the saved connection points to the correct server and port;
 2. verify the server-side key still exists and has management scope;
-3. if you used beta13 `TSSERVER_QUERY_ADMIN_API_KEY`, check whether that value changed; and
+3. if the server uses `TSSERVER_QUERY_ADMIN_API_KEY`, check whether that value changed; and
 4. update the saved connection if the server-side key was replaced.
 
 When manually creating a persistent key, use `lifetime=0` where appropriate.
@@ -120,7 +120,7 @@ Do not discard the persistent volume as a first troubleshooting step.
 
 ## `!remote` does not send a link, or the link stops working
 
-The bot replies privately, so check the listener's private chats. `Listener remote is unavailable: an admin must configure Public URL.` and `Listener remote requires an HTTPS Public URL.` mean `PUBLIC_URL` is missing or not HTTPS. `Listener remote needs a verified listener in the bot channel.` means the person is not in the bot's channel. A link works once and only for 5 minutes; a session ends after 15 minutes, when its owner leaves the channel, or when the backend restarts. In each case type `!remote` again. If listeners hit `Too many remote requests` right away, or sign-in attempts block everyone at once, the backend may be seeing every visitor as your proxy's address. Check the `Trusted proxies:` line in the backend's startup log; stock Docker images set a default, but an outer reverse proxy, or a backend run outside the images, needs `TRUST_PROXY` set. See [Media bots — Listener remote](music-bots.md#listener-remote).
+The bot replies privately, so check the listener's private chats. `Listener remote is unavailable: an admin must configure Public URL.` and `Listener remote requires an HTTPS Public URL.` mean `PUBLIC_URL` is missing or not HTTPS. `Listener remote needs a verified listener in the bot channel.` means the person is not in the bot's channel. A link works once and only for 5 minutes; the browser session lasts 12 hours (or 24 with **Remember this browser**), until the owner leaves the channel, signs out, or the backend restarts. Reloading `/remote` keeps the HttpOnly session cookie while those conditions hold. The bot also posts a short channel note that a private link was sent (never the link). Type `!remote` again if access ended. If listeners hit `Too many remote requests` right away, or sign-in attempts block everyone at once, the backend may be seeing every visitor as your proxy's address. Check the `Trusted proxies:` line in the backend's startup log; stock Docker images set a default, but an outer reverse proxy, or a backend run outside the images, needs `TRUST_PROXY` set. See [Media bots — Listener remote](music-bots.md#listener-remote).
 
 ## Reverse-proxy login or live-update problems
 
@@ -144,7 +144,7 @@ Check:
 - **candidate reachability:** `WEBRTC_NAT1TO1_IP` is an IPv4 the browser can dial (not a container `172.x`; not `127.0.0.1` unless the browser is on the Docker host);
 - **Docker host binding:** `WEBRTC_UDP_PORT` is published via `WEBRTC_BIND_IP` on the host (`${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`). Bind can differ from NAT1To1 when a firewall/NAT forwards the public UDP port to the host;
 - for public-Internet browsers: advertise the public IPv4 in `WEBRTC_NAT1TO1_IP`, forward UDP to the Docker host, and keep the host bind accordingly;
-- WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
+- WebSocket upgrade headers on the outer reverse proxy's `/ws` location (not on `/api`) so live UI updates still work;
 - Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 
 ### Check the browser side first
@@ -198,6 +198,16 @@ WEBRTC_NAT1TO1_IP=127.0.0.1,192.168.1.20
 
 `WEBRTC_BIND_IP=0.0.0.0` publishes the port on every host interface. To publish it only on the LAN address, set `WEBRTC_BIND_IP` to that address and use the address in place of `127.0.0.1` too. Recreate the sidecar afterwards (`docker compose -f docker-compose.pr-test.yml up -d sidecar`), then start watching again.
 
+## TeamSpeak 6.0.0-beta5 never answers a stream
+
+The bot starts streaming and the web UI preview plays, but nobody can watch in the TeamSpeak client. The client receives the stream offer and never answers it. A client trace stops at `HandleRemoteOffer ENTRY`. People who tried to watch can still be listed as viewers.
+
+This is not [stuck on "Connecting..."](#teamspeak-client-stuck-on-connecting). There the client answers the offer, then cannot reach an advertised address, and the sidecar log ends with `TeamSpeak viewer never connected`.
+
+Sidecars before 1.11.2 mark the stream's audio and video as send-and-receive (`a=sendrecv`). The TeamSpeak 6.0.0-beta5 client does not answer that offer. Older clients did. Every older sidecar sends the same offer, so downgrading does not help.
+
+Upgrade ts6-manager to 1.11.2 or newer, including the media sidecar. That sidecar offers send-only media (`a=sendonly`), which beta5 answers. A Docker sidecar follows the image tag. Replace a [native sidecar](native-sidecar.md#version-compatibility) with the 1.11.2 archive.
+
 ## Appearance custom CSS made the UI unusable
 
 Custom CSS is browser-local. Open:
@@ -207,3 +217,9 @@ Custom CSS is browser-local. Open:
 Safe mode suspends custom CSS for that page load (and the rest of that document lifetime) without deleting the saved text. Use Appearance → Advanced to **Disable** or **Reset**, then reload without `?safe-ui=1`.
 
 Do not rely on a visible Disable button under hostile CSS — type or bookmark the recovery URL before enabling custom CSS. Clearing site data for the origin also removes the preference, but safe mode is the supported recovery path.
+
+## Beta or prerelease images
+
+If you pinned a `vX.Y.Z-beta.N` or `sha-*` tag and the UI or schema misbehaves, do not switch `latest` on a production compose file. Use `docker compose --env-file .env.beta -f docker-compose.beta.yml` on `main`, point that tester stack back at the previous tag or at stable `v1.11.2`, and restore the volume backup. Keep `.env.beta` private and Git-ignored. See [Beta releases — Rollback](beta.md#rollback).
+
+Discord voice is not part of manager images. A missing Discord bot is expected. See [Discord bridge](discord-bridge.md).

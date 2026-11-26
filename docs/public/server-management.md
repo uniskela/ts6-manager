@@ -27,7 +27,7 @@ Administrators can:
 
 ### Channel icons
 
-TeamSpeak stores icons on the virtual server itself and a channel refers to one by number. In a channel's **Edit** dialog, **Server icons** lists the icons already on the server with previews; click one to use it, or pick the crossed circle for no icon. An administrator can **Upload** a PNG, JPEG or GIF (at most 256 KB; TeamSpeak shows icons at 16×16) and delete icons that are no longer wanted. Deleting an icon removes it from every channel and group still using it.
+TeamSpeak stores icons on the virtual server itself and a channel refers to one by number. In a channel's **Edit** dialog, **Server icons** lists the icons already on the server with previews; click one to use it, or pick the crossed circle for no icon. An administrator can **Upload** a PNG, JPEG, GIF or SVG (at most 256 KB; TeamSpeak shows icons at 16×16) and delete icons that are no longer wanted. SVG previews are shown as images only, so scripts or links inside an SVG never run in the manager. Deleting an icon removes it from every channel and group still using it.
 
 Icons travel over the server's SSH query connection and TeamSpeak's file-transfer port (30033 by default), so SSH credentials must be set on the connection and the manager must be able to reach that port. The query login needs TeamSpeak's icon management permission (`b_icon_manage`) to upload or delete.
 
@@ -80,6 +80,8 @@ For installation, safe-area behavior, updates, and offline limits, see [Install 
 
 Authenticated SSH Query is used for features that require file-transfer or event access.
 
+On TeamSpeak 6.0.0-beta14, channel file names are UTF-8. Files an older server stored under a non-UTF-8 locale stay hidden in this browser until they are renamed on that server. See [file names](teamspeak-compatibility.md#file-names-on-600-beta14).
+
 The UI includes:
 
 - channel file browsing (create/delete via SSH Query; upload/download still use the TeamSpeak client);
@@ -110,5 +112,14 @@ Treat widget tokens as public-access capabilities and expose only the informatio
 ## Access control
 
 The application has administrator and viewer roles plus per-server access control. Sensitive configuration, automation, and server-management operations remain administrator-only.
+
+Viewers see only their assigned servers in the server list and in server details. Requesting a server that is not assigned returns an authorization error. Assigned viewers can still browse that server's channels and connected clients. These reads are administrator-only, including on an assigned server:
+
+- complaints and messages;
+- instance information;
+- permissions;
+- file listings and storage summaries;
+- server and channel groups, including their members, permissions, and a connected client's group membership; and
+- bans, privilege tokens, and the client database.
 
 See [Security](security.md) for the controls around stored credentials, outbound requests, WebSockets, and automation.

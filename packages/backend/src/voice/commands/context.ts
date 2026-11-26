@@ -132,7 +132,7 @@ export interface CommandMethods {
   handleAgain(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: ChatMediaRequest): Promise<void>;
   findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery>;
-  handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
+  handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string, expectedUid?: string): Promise<void>;
   handleRepeat(bot: VoiceBot, userClid: number, args: string): void;
   handleSeek(bot: VoiceBot, userClid: number, args: string): Promise<void>;
   handleRemove(bot: VoiceBot, userClid: number, args: string): void;
@@ -164,6 +164,8 @@ export interface CommandContext extends CommandMethods {
   registeredBots: Set<number>;
   eventBridge: EventBridge | null;
   readonly listenerRemote: ListenerRemoteService | null;
+  /** Controllable clock for playlist-vote deadlines (tests); defaults to Date.now. */
+  playlistVoteNow(): number;
   readonly flowCommandLookup: FlowCommandLookup | null;
   eventBridgeListening: boolean;
   botChannelConfig: Map<number, BotChannelConfig>;

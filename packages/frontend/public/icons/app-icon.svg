@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>TS6 Manager</title>
+  <defs>
+    <linearGradient id="brand" x1="96" y1="80" x2="416" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4fd3e2"/>
+      <stop offset="1" stop-color="#9483ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="#0b1018"/>
+  <rect x="8" y="8" width="496" height="496" rx="120" fill="none" stroke="url(#brand)" stroke-opacity=".45" stroke-width="16"/>
+  <g transform="translate(-12 -12) scale(1)"><g fill="none" stroke="url(#brand)" stroke-width="56" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 128h240M248 128v200"/>
+    <circle cx="328" cy="328" r="80"/>
+  </g></g>
+</svg>

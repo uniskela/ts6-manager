@@ -33,6 +33,40 @@ interface FlowInfo {
   flowData: FlowDefinition;
 }
 
+/** Non-negative finite number, or undefined. */
+function toSeconds(value: unknown): number | undefined {
+  const sec = Number(value);
+  return Number.isFinite(sec) && sec >= 0 ? sec : undefined;
+}
+
+/** JSON object of clid → seconds; invalid JSON or entries are dropped. */
+function parseClidSeconds(json: string): Record<string, number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return {};
+  }
+  const byClid: Record<string, number> = {};
+  if (!parsed || typeof parsed !== 'object') return byClid;
+  for (const [clid, value] of Object.entries(parsed)) {
+    const sec = toSeconds(value);
+    if (sec !== undefined) byClid[clid] = sec;
+  }
+  return byClid;
+}
+
+/**
+ * Parse `onlinetime_last_<cldbid>`: a JSON map of clid → seconds counted for that
+ * connection. Older versions stored one number for the whole user (`legacy`).
+ */
+function parseRankSessions(raw: string): { byClid: Record<string, number>; legacy?: number } {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) return { byClid: parseClidSeconds(trimmed) };
+  const legacy = Number.parseFloat(trimmed);
+  return { byClid: {}, legacy: toSeconds(legacy) };
+}
+
 export class FlowRunner {
   private activeRuns = new Map<number, Set<AbortController>>();
   private pendingReminders = new Map<string, number>();
@@ -757,35 +791,59 @@ export class FlowRunner {
     // Sort ranks descending by hours so highest rank is checked first
     ranks.sort((a, b) => b.hours - a.hours);
 
-    const clients = await client.executePost(ctx.sid, 'clientlist', { '-times': '', '-groups': '' });
+    const clients = await client.executePost(ctx.sid, 'clientlist', { '-groups': '' });
     if (!Array.isArray(clients)) return;
 
-    let promoted = 0;
+    // One entry per database id, so a user with several connections is counted once.
+    const users = new Map<string, { clids: Array<{ clid: string; listedMs: unknown }>; groups: Set<string> }>();
     for (const cl of clients) {
       if (String(cl.client_type) === '1') continue;
       const cldbid = String(cl.client_database_id);
+      let user = users.get(cldbid);
+      if (!user) {
+        user = { clids: [], groups: new Set() };
+        users.set(cldbid, user);
+      }
+      user.clids.push({ clid: String(cl.clid), listedMs: cl.connection_connected_time });
+      for (const g of String(cl.client_servergroups || '').split(',')) if (g) user.groups.add(g);
+    }
 
+    let promoted = 0;
+    for (const [cldbid, user] of users) {
       // Get total online time from BotVariable (accumulate via cron)
       const varName = `onlinetime_${cldbid}`;
       const lastKey = `onlinetime_last_${cldbid}`;
-      const storedStr = await ctx.getVariable(varName);
-      const storedSeconds = parseFloat(storedStr) || 0;
-      // connection_connected_time is ms since current session start
-      const connectionTimeSec = (parseInt(cl.connection_connected_time) || 0) / 1000;
-      let lastCounted = parseFloat(await ctx.getVariable(lastKey)) || 0;
-      // Session restarted — reset per-session counter
-      if (connectionTimeSec < lastCounted) lastCounted = 0;
-      const delta = Math.max(0, connectionTimeSec - lastCounted);
+      const storedSeconds = Number.parseFloat(await ctx.getVariable(varName)) || 0;
+      const lastCounted = parseRankSessions(await ctx.getVariable(lastKey));
+
+      // Seconds counted so far are tracked per clid. The user was online for the
+      // wall time since the last run, which is the largest per-connection advance:
+      // overlapping connections must not add up, and a surviving shorter
+      // connection must not be re-credited when the longest one drops.
+      const sessions: Record<string, number> = {};
+      let delta = 0;
+      for (const { clid, listedMs } of user.clids) {
+        // Sequential on purpose: WebQueryClient runs commands one at a time with a
+        // fixed gap, so parallel calls are not faster and would crowd out other Query traffic.
+        const ms = await this.readConnectedTimeMs(ctx, client, clid, listedMs); // NOSONAR: the query client serializes commands anyway
+        if (ms === undefined) continue; // left before we could read the session
+        const sec = ms / 1000;
+        sessions[clid] = sec;
+        let last = lastCounted.byClid[clid] ?? lastCounted.legacy ?? 0;
+        // Session restarted (or the clid was reused) — reset per-session counter
+        if (sec < last) last = 0;
+        delta = Math.max(delta, sec - last);
+      }
+      if (Object.keys(sessions).length === 0) continue;
+
       const totalSeconds = storedSeconds + delta;
       const totalHours = totalSeconds / 3600;
 
       await ctx.setVariable(varName, String(totalSeconds));
-      await ctx.setVariable(lastKey, String(connectionTimeSec));
-
-      const clientGroups = String(cl.client_servergroups || '').split(',');
+      await ctx.setVariable(lastKey, JSON.stringify(sessions));
 
       for (const rank of ranks) {
-        if (totalHours >= rank.hours && !clientGroups.includes(rank.groupId)) {
+        if (totalHours >= rank.hours && !user.groups.has(String(rank.groupId))) {
           try {
             await client.executePost(ctx.sid, 'servergroupaddclient', { sgid: rank.groupId, cldbid });
             promoted++;
@@ -795,6 +853,26 @@ export class FlowRunner {
       }
     }
     ctx.setTemp('rankPromotedCount', promoted);
+  }
+
+  /**
+   * Milliseconds since the client's current session started. `clientlist -times`
+   * does not include connection_connected_time (TS6 WebQuery, TS3 ServerQuery),
+   * so fall back to clientinfo. Returns undefined when the client already left.
+   */
+  private async readConnectedTimeMs(ctx: ExecutionContext, client: WebQueryClient, clid: string, listedMs: unknown): Promise<number | undefined> {
+    if (listedMs !== undefined && listedMs !== null && listedMs !== '') {
+      const ms = Number(listedMs);
+      if (Number.isFinite(ms) && ms >= 0) return ms;
+    }
+    try {
+      const info = await client.execute(ctx.sid, 'clientinfo', { clid });
+      const ms = Number(info?.[0]?.connection_connected_time);
+      return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
+    } catch (err) {
+      if (err instanceof TSApiError && (err.code === 512 || /invalid client\s?id/i.test(err.message))) return undefined;
+      throw err;
+    }
   }
 
   private async executeTempChannelCleanup(data: TempChannelCleanupActionData, ctx: ExecutionContext, client: WebQueryClient): Promise<void> {

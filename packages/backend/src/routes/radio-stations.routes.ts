@@ -2,12 +2,27 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { validateUrl } from '../utils/url-validator.js';
+import { radioLocalAllowlist } from '../utils/app-settings.js';
 import { radioBrowser } from '../utils/radio-browser.js';
 import type { RadioPreset } from '@ts6/common';
 
 export const radioStationRoutes: Router = Router({ mergeParams: true });
 
 radioStationRoutes.use(requireRole('admin'));
+
+/**
+ * Validate an admin-configured radio station URL. Radio stations are operator
+ * sources (like IPTV playlists), so hosts the operator approved on the LAN
+ * list may be used. Loopback, link-local and cloud metadata addresses stay
+ * blocked for every source.
+ */
+async function validateRadioStationUrl(url: unknown, prisma: any): Promise<void> {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new AppError(400, 'url must be a string');
+  }
+  const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'], localAllowlist: await radioLocalAllowlist(prisma) });
+  if (!urlCheck.valid) throw new AppError(400, `Invalid URL: ${urlCheck.error}`);
+}
 
 // Built-in radio station presets
 const RADIO_PRESETS: RadioPreset[] = [
@@ -80,8 +95,7 @@ radioStationRoutes.post('/', async (req: Request, res: Response, next) => {
     if (!name || !url) throw new AppError(400, 'name and url are required');
 
     // C4: Validate radio station URL
-    const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
-    if (!urlCheck.valid) throw new AppError(400, `Invalid URL: ${urlCheck.error}`);
+    await validateRadioStationUrl(url, prisma);
 
     const station = await prisma.radioStation.create({
       data: {
@@ -118,8 +132,7 @@ radioStationRoutes.put('/:id', async (req: Request, res: Response, next) => {
     }
     if (url !== undefined) {
       if (typeof url !== 'string') throw new AppError(400, 'url must be a string');
-      const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
-      if (!urlCheck.valid) throw new AppError(400, `Invalid URL: ${urlCheck.error}`);
+      await validateRadioStationUrl(url, prisma);
       data.url = url;
     }
     if (genre !== undefined) {

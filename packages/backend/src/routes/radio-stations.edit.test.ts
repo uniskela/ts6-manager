@@ -20,7 +20,7 @@ async function send(app: Express, method: string, path: string, body: unknown) {
   }
 }
 
-function fixture(role: 'admin' | 'viewer' | null = 'admin', hasAccess = true) {
+function fixture(role: 'admin' | 'viewer' | null = 'admin', hasAccess = true, allowedLocalHosts: string[] = []) {
   const original = {
     id: 7, serverConfigId: 1, name: 'Original station', url: 'https://8.8.8.8/live',
     genre: 'Rock', imageUrl: 'https://example.com/logo.png', createdAt: new Date('2026-10-01'),
@@ -36,6 +36,13 @@ function fixture(role: 'admin' | 'viewer' | null = 'admin', hasAccess = true) {
   });
   app.locals.prisma = {
     userServerAccess: { findUnique: async () => hasAccess ? {} : null },
+    appSetting: {
+      findUnique: async ({ where }: any) => (
+        where.key === 'radio_allowed_local_hosts' && allowedLocalHosts.length
+          ? { key: where.key, value: JSON.stringify(allowedLocalHosts) }
+          : null
+      ),
+    },
     radioStation: {
       findFirst: async ({ where }: any) => row.id === where.id && row.serverConfigId === where.serverConfigId ? { ...row } : null,
       update: async ({ where, data }: any) => {
@@ -82,6 +89,32 @@ describe('radio station edit', () => {
       assert.deepEqual(f.writes, []);
     });
   }
+
+  it('accepts a LAN station the administrator allowed', async () => {
+    const f = fixture('admin', true, ['192.168.1.10']);
+    const added = await send(f.app, 'POST', '/api/servers/1/radio-stations', { name: 'Home radio', url: 'http://192.168.1.10:8000/live' });
+    assert.equal(added.status, 201);
+    assert.equal(added.body.url, 'http://192.168.1.10:8000/live');
+    const edited = await send(f.app, 'PUT', stationPath, { url: 'http://192.168.1.10:8000/live' });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.url, 'http://192.168.1.10:8000/live');
+  });
+
+  it('still refuses a LAN station that is not on the allowed list', async () => {
+    const f = fixture('admin', true, ['192.168.1.10']);
+    const added = await send(f.app, 'POST', '/api/servers/1/radio-stations', { name: 'Other', url: 'http://192.168.1.99/live' });
+    assert.equal(added.status, 400);
+    assert.match(added.body.error, /Private\/reserved IP addresses are blocked/);
+  });
+
+  it('never allows loopback, link-local or cloud metadata addresses', async () => {
+    for (const host of ['127.0.0.1', '169.254.169.254', 'metadata.google.internal']) {
+      const f = fixture('admin', true, [host, '127.0.0.0/8', '169.254.0.0/16']);
+      const added = await send(f.app, 'POST', '/api/servers/1/radio-stations', { name: 'Blocked', url: `http://${host}/live` });
+      assert.equal(added.status, 400, host);
+      assert.deepEqual(f.writes, []);
+    }
+  });
 
   it('404 for a station on another server', async () => {
     const f = fixture();

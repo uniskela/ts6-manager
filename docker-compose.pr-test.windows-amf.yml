@@ -6,7 +6,7 @@
 
 services:
   teamspeak:
-    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta14
     container_name: ts6-pr-teamspeak
     restart: unless-stopped
     environment:

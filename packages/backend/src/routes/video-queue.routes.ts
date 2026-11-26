@@ -18,7 +18,7 @@ import {
 import type { VoiceBot, VideoStreamStartOptions } from '../voice/voice-bot.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { runMediaAudited } from './media-audit.js';
-import { assertVideoSource, saveBotVolume } from './music-bots.routes.js';
+import { assertVideoSource } from './music-bots.routes.js';
 
 /** Most videos one playlist link adds. */
 export const VIDEO_PLAYLIST_CAP = 25;
@@ -115,9 +115,7 @@ export function createVideoQueueRoutes(deps: { expandYouTube?: typeof expandYouT
         replaceSessionIds,
         () => (didStart === undefined ? undefined : didStart ? 'media.video.start' : 'media.video.queue_add'),
       );
-      if (result.started && options.volume != null) {
-        await saveBotVolume(req.app.locals.prisma, bot.currentConfig.id, bot.currentConfig.volume);
-      }
+      // Start volume is persisted by the manager volumeChange listener when it changes.
       const body: QueueVideoResponse = {
         success: true,
         queued: result.queued,

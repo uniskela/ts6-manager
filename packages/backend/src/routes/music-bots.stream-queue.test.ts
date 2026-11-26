@@ -227,13 +227,15 @@ describe('stream/queue: adding', () => {
     assert.equal(app.calls.audits.at(-1)?.action, 'media.video.start');
   });
 
-  it('saves the level a queued start was given, as stream/start does', async () => {
+  it('passes a start volume into the stream start; queueing behind does not re-apply it', async () => {
     const app = buildApp();
-    app.bot.currentConfig.volume = 35;
+    // Persistence is VoiceBotManager's volumeChange listener in production; this
+    // mock start records the options only.
     await app.request('POST', '/3/stream/queue', { source: watch(1), volume: 35 });
-    assert.deepEqual(app.calls.volumeSaves, [{ where: { id: 3 }, data: { volume: 35 } }]);
+    assert.equal(app.calls.starts[0].options.volume, 35);
+    assert.deepEqual(app.calls.volumeSaves, [], 'routes no longer double-save beside the listener');
     await app.request('POST', '/3/stream/queue', { source: watch(2), volume: 80 });
-    assert.equal(app.calls.volumeSaves.length, 1, 'queueing behind a running stream changes no level');
+    assert.equal(app.calls.starts.length, 1, 'queueing behind a running stream starts nothing');
   });
 
   it('expands a playlist in order', async () => {

@@ -12,6 +12,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [Environment variables](environment-variables.md) — backend, frontend, and sidecar settings
 - [Native media sidecar](native-sidecar.md) — optional release binaries for host GPU encoders
 - [Upgrading](upgrading.md) — update containers without losing credentials or database state
+- [Beta releases](beta.md) — prerelease images, tester compose, and rollback (not production)
 - [Switching from clusterzx](migrating-from-clusterzx.md) — move an existing clusterzx/ts6-manager install to these images and keep its data
 
 ## Use TS6 Manager
@@ -25,8 +26,9 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 
 - [Reverse proxy](reverse-proxy.md) — Coolify and reverse-proxy deployment notes
 - [Security](security.md) — security controls and deployment expectations
-- [TeamSpeak compatibility](teamspeak-compatibility.md) — beta13 Query settings and compatibility testing
+- [TeamSpeak compatibility](teamspeak-compatibility.md) — beta14 Query settings, UTF-8 file names, and compatibility testing
 - [Troubleshooting](troubleshooting.md) — common connection, media, sidecar, and upgrade problems
+- [Discord bridge](discord-bridge.md) — laboratory status only; not a released product
 
 ## Project
 
@@ -34,4 +36,4 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [API errors](api-errors.md) — user-facing error contract and reason codes
 - [Roadmap](roadmap.md) — implemented phases and public follow-up direction
 
-The source repository remains the canonical implementation. Hosted docs at [www.uniskela.com/docs/ts6-manager](https://www.uniskela.com/docs/ts6-manager/) are generated from these reviewed pages. `docs/manifest.json` lists them; the `public` directory is not part of the URL.
+The source repository remains the canonical implementation. Hosted docs at [ts6manager.com/docs](https://ts6manager.com/docs/) are generated from these reviewed pages. `docs/manifest.json` lists them; the `public` directory is not part of the URL.

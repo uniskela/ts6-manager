@@ -8,7 +8,7 @@
 | `docs/internal/` | Implementation plans and maintainer notes. Not published. |
 | `docs/agents/` | Agent-only working notes. Not published. |
 
-Local setup is [Development](docs/public/development.md). Do not add `docs/internal/` or `docs/agents/` paths to the publication manifest. URL slugs stay stable (`/docs/ts6-manager/latest/<slug>/`).
+Local setup is [Development](docs/public/development.md). Do not add `docs/internal/` or `docs/agents/` paths to the publication manifest. URL slugs stay stable (`/docs/latest/<slug>/` on the TS6 Manager website; formerly `/docs/ts6-manager/latest/<slug>/` on uniskela.com).
 
 ## Releases (Release Please)
 
@@ -107,7 +107,7 @@ Do this **after** the last intended pre-release PR has landed, because a subsequ
 
 ### Local JavaScript toolchain
 
-CI uses Node.js 20 and pnpm 9. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major. Commands and container setup are in [Development](docs/public/development.md).
+CI uses Node.js 20 and the pnpm version in `packageManager` (`pnpm@9.15.9`). Workflows that call `pnpm/action-setup` must not also pass `version`, because the action rejects both. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major. Commands and container setup are in [Development](docs/public/development.md).
 
 ```bash
 corepack enable
@@ -120,7 +120,9 @@ Newer pnpm majors change dependency build-script approval and `pnpm.overrides` h
 
 ### Dependabot npm group PRs
 
-If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge. Dependabot’s regenerated lockfile often drops `pnpm.overrides` while `package.json` still has them (same class as #89/#95/#103/#323). Do **not** relax `pnpm install --frozen-lockfile`. Recreate wanted bumps on a human branch with `pnpm install` (pnpm 9) so overrides remain in the lockfile. Repo hygiene runs `scripts/ci/check-pnpm-overrides.py` so stripped overrides fail before install. npm updates are split across smaller Dependabot groups (no catch-all `*`); that limits mega-PRs but does **not** by itself fix overrides stripping.
+`package.json` pins `packageManager` to `pnpm@9.15.9`. Dependabot installs that exact pnpm. Its default (currently pnpm 11+) ignores `pnpm.overrides` and rewrites `pnpm-lock.yaml` without the top-level `overrides:` block. pnpm 9 does not read overrides from `pnpm-workspace.yaml`, so leave the overrides in `package.json` and do not remove the pin.
+
+If a lockfile still arrives without that block, CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. Close the PR without merge (same class as #89/#95/#103/#323). Do **not** relax `pnpm install --frozen-lockfile`. Recreate wanted bumps on a human branch with `pnpm install` (pnpm 9.15.9) so overrides remain in the lockfile. Repo hygiene runs `scripts/ci/check-pnpm-overrides.py` so stripped overrides fail before install. npm updates are split across smaller Dependabot groups (no catch-all `*`); that only limits PR size.
 
 ### Checklist (agents / maintainers)
 

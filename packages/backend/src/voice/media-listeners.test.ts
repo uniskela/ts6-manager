@@ -5,12 +5,21 @@ import { resolveMediaIdentity, listHumanMediaListeners, VoteSkip } from './media
 test('identity lookup uses fresh server groups, verifies UID and fails closed', async () => {
   const query = async (command: string) => {
     assert.equal(command, 'clientinfo clid=2');
-    return 'client_unique_identifier=human client_servergroups=6,9 client_type=0\nerror id=0 msg=ok';
+    return 'clid=2 cid=8 client_unique_identifier=human client_servergroups=6,9 client_type=0\nerror id=0 msg=ok';
   };
-  assert.deepEqual(await resolveMediaIdentity(query, 2, 'human'), { uid: 'human', serverGroupIds: [6, 9] });
+  assert.deepEqual(await resolveMediaIdentity(query, 2, 'human'), {
+    uid: 'human', serverGroupIds: [6, 9], channelId: 8,
+  });
   assert.equal(await resolveMediaIdentity(query, 2, 'old-session'), null);
   assert.equal(await resolveMediaIdentity(query, 0), null);
-  for (const response of ['client_servergroups=6', 'client_unique_identifier=human', 'client_unique_identifier=human client_servergroups=6x', 'client_unique_identifier=bot client_servergroups=6 client_type=1']) {
+  for (const response of [
+    'client_servergroups=6',
+    'client_unique_identifier=human',
+    'client_unique_identifier=human client_servergroups=6x',
+    'client_unique_identifier=bot client_servergroups=6 client_type=1',
+    'client_unique_identifier=human client_servergroups=6,9 client_type=0',
+    'clid=9 cid=8 client_unique_identifier=human client_servergroups=6,9 client_type=0',
+  ]) {
     assert.equal(await resolveMediaIdentity(async () => response, 2), null);
   }
   assert.equal(await resolveMediaIdentity(async () => { throw new Error('offline'); }, 2), null);

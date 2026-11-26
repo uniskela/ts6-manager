@@ -242,7 +242,7 @@ Release archives are compiled for every platform in the table above, and CI runs
 
 ## Building from source
 
-Use Go 1.26.9 or newer and a checkout of the release tag your backend runs:
+Use Go 1.26.11 or newer and a checkout of the release tag your backend runs:
 
 ```bash
 git checkout v1.11.0

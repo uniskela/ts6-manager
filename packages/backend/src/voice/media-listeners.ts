@@ -5,6 +5,8 @@ export type MediaQuery = (command: string) => Promise<string>;
 export interface MediaIdentity {
   uid: string;
   serverGroupIds: number[];
+  /** Current TeamSpeak channel id from the same clientinfo row. */
+  channelId: number;
 }
 
 function queryEntries(raw: string): Record<string, string>[] {
@@ -26,13 +28,20 @@ export async function resolveMediaIdentity(
   if (!Number.isSafeInteger(clid) || clid <= 0) return null;
   try {
     const [entry] = queryEntries(await query(`clientinfo clid=${clid}`));
-    const uid = entry?.client_unique_identifier;
-    const groups = entry?.client_servergroups;
-    if (!uid || (expectedUid && uid !== expectedUid) || entry.client_type === '1') return null;
+    if (!entry) return null;
+    const uid = entry.client_unique_identifier;
+    const groups = entry.client_servergroups;
+    const channelId = Number(entry.cid);
+    const reportedClid = Number(entry.clid);
+    // Authoritative row must be a human client in a real channel; refuse query/bots and
+    // stale clid reuse when TeamSpeak echoes a different clid on the same response.
+    if (!uid || (expectedUid && uid !== expectedUid) || entry.client_type !== '0') return null;
+    if (entry.clid !== undefined && entry.clid !== '' && reportedClid !== clid) return null;
     if (!groups || !/^\d+(?:,\d+)*$/.test(groups)) return null;
+    if (!Number.isSafeInteger(channelId) || channelId <= 0) return null;
     const serverGroupIds = groups.split(',').map(Number);
     if (serverGroupIds.some(id => !Number.isSafeInteger(id) || id <= 0)) return null;
-    return { uid, serverGroupIds };
+    return { uid, serverGroupIds, channelId };
   } catch {
     return null;
   }

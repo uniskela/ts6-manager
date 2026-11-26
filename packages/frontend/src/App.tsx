@@ -66,7 +66,6 @@ const Settings = lazy(() => import('@/pages/Settings'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
 const WidgetPage = lazy(() => import('@/pages/WidgetPage'));
 const SetupPage = lazy(() => import('@/pages/SetupPage'));
-const ListenerRemote = lazy(() => import('@/pages/ListenerRemote'));
 
 export function App() {
   return (
@@ -79,7 +78,6 @@ export function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/setup" element={<SetupPage />} />
             <Route path="/widget/:token" element={<WidgetPage />} />
-            <Route path="/remote" element={<ListenerRemote />} />
 
             <Route element={<AppLayout />}>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -3,6 +3,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ioAAAAASUVORK5CYII=', 'base64');
 const existing = 111111;
 const uploaded = 222222;
+const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="red"/></svg>');
 
 async function signIn(page: Page) {
   await page.goto('/login');
@@ -11,13 +12,13 @@ async function signIn(page: Page) {
   await Promise.all([page.waitForURL('/dashboard', { timeout: 15_000 }), page.getByRole('button', { name: 'Sign In' }).click()]);
 }
 
-async function setup(page: Page, request: APIRequestContext, listStatus = 200) {
+async function setup(page: Page, request: APIRequestContext, listStatus = 200, image = { contentType: 'image/png', body: png }) {
   let ids = [existing];
   const calls: { method: string; url: string; body: string | null }[] = [];
   await page.route(/\/api\/servers\/\d+\/vs\/\d+\/icons(\/\d+)?$/, async (r) => {
     const req = r.request();
     const single = /\/icons\/\d+$/.test(req.url());
-    if (req.method() === 'GET' && single) return r.fulfill({ contentType: 'image/png', body: png });
+    if (req.method() === 'GET' && single) return r.fulfill(image);
     calls.push({ method: req.method(), url: req.url(), body: req.postData() });
     if (req.method() === 'POST') { ids = [uploaded, ...ids]; return r.fulfill({ status: 201, json: { id: uploaded, size: png.length, uploadedAt: '2026-10-11T00:00:00.000Z' } }); }
     if (req.method() === 'DELETE') { ids = ids.filter((id) => !req.url().endsWith(`/${id}`)); return r.fulfill({ json: { success: true } }); }
@@ -75,4 +76,13 @@ test('a server without file access explains why and the icon id can still be typ
   await expect(dialog.getByRole('alert').filter({ hasText: 'SSH credentials not configured' })).toBeVisible();
   await dialog.getByLabel('Icon ID').fill('4242');
   await expect(dialog.getByLabel('Icon ID')).toHaveValue('4242');
+});
+
+test('SVG icons render in the picker from an opaque data URL', async ({ page, request }) => {
+  const { dialog } = await setup(page, request, 200, { contentType: 'image/svg+xml', body: svg });
+  const img = dialog.getByRole('button', { name: `Use icon ${existing}` }).locator('img');
+  await expect(img).toBeVisible();
+  await expect(img).toHaveAttribute('src', /^data:image\/svg\+xml;base64,/);
+  await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+  await expect(dialog.getByText(/PNG, JPEG, GIF or SVG/)).toBeVisible();
 });

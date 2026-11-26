@@ -91,7 +91,7 @@ describe('listener remote address guard', () => {
     assert.equal((await f.request('/remote/state', { ...auth(f.session), ...from })).status, 429);
 
     const session = await f.signIn();
-    f.advance(15 * 60_000);
+    f.advance(12 * 60 * 60_000 + 1);
     const later = { 'X-Forwarded-For': '203.0.113.11' };
     for (let n = 0; n < 120; n++) assert.equal((await f.request('/remote/state', { ...auth(session), ...later })).status, 401);
     assert.equal((await f.request('/remote/state', { ...auth(session), ...later })).status, 429);

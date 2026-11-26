@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   CACHE_DIR_NAME, MediaCache, MediaCacheError, cacheKey, probeAudio, canonicalUrl, checkProbe, checkStagedFile,
+  enforceMeasuredDurationCap,
   identityFromInfo, parseManifest, parseProbe, rememberSuccess, renameWithRetry, runFfprobeCheck, type StagedDownload,
 } from './media-cache.js';
 
@@ -194,6 +195,53 @@ describe('download verification', () => {
       } finally {
         await rm(music, { recursive: true, force: true });
       }
+    }
+  });
+
+  it('enforceMeasuredDurationCap refuses unknown and over-limit measured lengths', () => {
+    assert.doesNotThrow(() => enforceMeasuredDurationCap(900, 900));
+    assert.throws(
+      () => enforceMeasuredDurationCap(901, 900),
+      (err: unknown) => err instanceof MediaCacheError && err.code === 'too_long',
+    );
+    assert.throws(
+      () => enforceMeasuredDurationCap(null, 900),
+      (err: unknown) => err instanceof MediaCacheError && err.code === 'duration_unknown',
+    );
+  });
+
+  it('refuses to publish when the probe exceeds maxDurationSec even if metadata is under the limit', async () => {
+    const music = await mkdtemp(path.join(tmpdir(), 'ts6-cache-maxdur-'));
+    try {
+      const cache = new MediaCache(music, {
+        probe: async () => ({ hasAudio: true, durationSec: 950 }),
+        log: () => {},
+      });
+      const key = cacheKey({ kind: 'youtube', videoId: 'measuredtoolong' });
+      let downloads = 0;
+      const download = async (staging: string): Promise<StagedDownload> => {
+        downloads++;
+        const file = path.join(staging, 'media.opus');
+        await writeFile(file, 'audio');
+        // Advertised under the ceiling; measured probe is over.
+        return { reportedPaths: [file], expectedDurationSec: 880, kind: 'youtube', extractor: 'Youtube' };
+      };
+      await assert.rejects(
+        cache.fetch(key, download, { maxDurationSec: 900 }),
+        (err: unknown) => err instanceof MediaCacheError && err.code === 'too_long',
+      );
+      assert.equal(downloads, 1);
+      assert.equal(await cache.lookup(key), null);
+      // Without a ceiling the same download publishes (admin/chat path).
+      const file = await cache.fetch(key, download);
+      assert.ok(file);
+      assert.equal(await cache.measuredDuration(key), 950);
+      await assert.rejects(
+        cache.fetch(key, async () => { throw new Error('should reuse cache'); }, { maxDurationSec: 900 }),
+        (err: unknown) => err instanceof MediaCacheError && err.code === 'too_long',
+      );
+    } finally {
+      await rm(music, { recursive: true, force: true });
     }
   });
 

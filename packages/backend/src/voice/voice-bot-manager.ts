@@ -14,7 +14,7 @@ import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { mediaCacheFor } from './audio/media-cache.js';
-import { loadMaxVideoDuration, loadVideoStreamingSettings, loadYoutubeDirectStream } from '../utils/app-settings.js';
+import { loadMaxVideoDuration, loadVideoStreamingSettings, loadYoutubeDirectStream, radioLocalHosts } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 import { parseAutoStopEmptySeconds } from './streaming/lifecycle.js';
@@ -22,6 +22,7 @@ import { VideoQueueController, type VideoQueueItem, type VideoQueueSessionOption
 import { createVideoQueueStore } from './streaming/video-queue-store.js';
 import { AutomationController, type AutomationRuntimeState } from './automation-controller.js';
 import { readAutomationSettings } from './automation-settings.js';
+import { saveBotVolume } from './bot-volume.js';
 
 type SavedVideoQueue = { items: VideoQueueItem[]; options: VideoQueueSessionOptions | null };
 
@@ -155,6 +156,8 @@ export class VoiceBotManager extends EventEmitter {
         ?? (() => loadVideoStreamingSettings(this.prisma, config.serverConfigId)),
       loadYoutubeDirectStream: config.loadYoutubeDirectStream
         ?? (() => loadYoutubeDirectStream(this.prisma)),
+      loadRadioLocalHosts: config.loadRadioLocalHosts
+        ?? (() => radioLocalHosts(this.prisma)),
       videoSourceFinished: async (reason, detail) => videoQueue?.onSourceFinished(reason, detail) ?? false,
     });
 
@@ -274,6 +277,11 @@ export class VoiceBotManager extends EventEmitter {
 
     bot.on('volumeChange', (volume: number) => {
       this.broadcast('music:bot:volumeChange', { botId: config.id, volume });
+      // !vol / Discord / flows only change memory; persist so the next session
+      // does not come back at the old DB level (often 100%).
+      void saveBotVolume(this.prisma, config.id, volume).catch((err: Error) => {
+        console.error(`[VoiceBotManager] Failed to save volume for bot ${config.id}: ${err.message}`);
+      });
     });
 
     bot.on('metadataChange', (item: QueueItem) => {

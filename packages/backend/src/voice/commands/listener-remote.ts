@@ -1,5 +1,6 @@
 import { loadPublicUrl } from '../../utils/app-settings.js';
-import { resolveMediaIdentity, listHumanMediaListeners } from '../media-listeners.js';
+import { resolveMediaIdentity } from '../media-listeners.js';
+import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply } from './dedupe.js';
@@ -29,6 +30,7 @@ export function revokeDepartedRemote(
     if (cfg.serverConfigId === configId && cfg.virtualServerId === sid
       && context.voiceBotManager.getBot(botId)?.ts3ClientId === clid) {
       context.listenerRemote?.revoke(botId);
+      cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
     }
   }
 }
@@ -45,36 +47,50 @@ export async function handleListenerRemote(
   const config = context.botChannelConfig.get(botId);
   const sid = config?.virtualServerId;
   if (!sid || !tryClaimChatInfoReply(configId, sid, 0, clid, 'remote-private')) return;
-  const reply = (message: string) => {
-    if (bot.floodHoldActive) return;
-    try { bot.sendTextMessage(clid, message); }
-    catch { console.warn('[MusicCmd] Private listener remote reply failed'); }
+  let privateAccepted = false;
+  const replyPrivate = (message: string): boolean => {
+    if (bot.floodHoldActive) return false;
+    try {
+      bot.sendTextMessage(clid, message);
+      return true;
+    } catch {
+      console.warn('[MusicCmd] Private listener remote reply failed');
+      return false;
+    }
+  };
+  /** Channel ack never includes the link/token; wording avoids claiming verified delivery. */
+  const ackChannel = (channelId: number) => {
+    if (!privateAccepted || bot.floodHoldActive) return;
+    if (!tryClaimChatInfoReply(configId, sid, channelId, clid, 'remote-channel-ack')) return;
+    try { bot.sendChannelMessage('A private remote link was sent.'); }
+    catch { /* flood/transport — private path already attempted; do not escalate */ }
   };
   try {
     if (!context.listenerRemote || !context.eventBridge || !expectedUid || !connected(bot)
       || config?.serverConfigId !== configId || !Number.isSafeInteger(sid) || sid <= 0) {
-      reply('Listener remote needs a verified listener in the bot channel.');
+      replyPrivate('Listener remote needs a verified listener in the bot channel.');
       return;
     }
     const state = revisionState(context), revision = state.value;
     const channelId = bot.getCurrentChannelId();
     const { publicUrl } = await loadPublicUrl(context.prisma);
-    if (!publicUrl) { reply('Listener remote is unavailable: an admin must configure Public URL.'); return; }
+    if (!publicUrl) { replyPrivate('Listener remote is unavailable: an admin must configure Public URL.'); return; }
     const url = new URL(publicUrl);
     const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback && process.env.NODE_ENV !== 'production')) {
-      reply('Listener remote requires an HTTPS Public URL.');
+      replyPrivate('Listener remote requires an HTTPS Public URL.');
       return;
     }
     const query = (command: string) => context.eventBridge!.executeCommand(configId, sid, command);
     const identity = await resolveMediaIdentity(query, clid, expectedUid);
     const excluded = context.musicBotClidsOnServer(configId, sid);
     excluded.add(bot.ts3ClientId);
-    const listeners = identity ? await listHumanMediaListeners(query, channelId, excluded) : null;
-    if (!identity || !listeners?.some(peer => peer.clid === clid && peer.uid === identity.uid)
+    // Own presence via clientinfo cid — not clientlist (peer UID gaps poison the roster).
+    // Still refuse managed music-bot clids so a bot never receives a listener remote.
+    if (!identity || identity.channelId !== channelId || excluded.has(clid)
       || bot.getCurrentChannelId() !== channelId || !connected(bot)
       || state.value !== revision) {
-      reply('Listener remote needs a verified listener in the bot channel.');
+      replyPrivate('Listener remote needs a verified listener in the bot channel.');
       return;
     }
     if (bot.floodHoldActive) { bot.noteIgnoredCommand(); return; }
@@ -90,10 +106,13 @@ export async function handleListenerRemote(
       if (bot.floodHoldActive) { bot.noteIgnoredCommand(); throw new AppError(429, 'TeamSpeak flood hold'); }
       const grant = context.listenerRemote!.issue({ botId, serverConfigId: configId, virtualServerId: sid, channelId, clid, uid: identity.uid });
       // Delivery stays in this synchronous section; audit completion must not delay it.
-      reply(`Your private one-time listener remote link: ${publicUrl}/remote#token=${grant.token}`);
+      privateAccepted = replyPrivate(
+        `Your private one-time listener remote link: ${publicUrl}/remote#token=${grant.token}`,
+      );
+      if (privateAccepted) ackChannel(channelId);
     });
   } catch {
     // Query/service errors may contain command text or credentials: never echo them.
-    reply('Listener remote is unavailable right now. Try again shortly.');
+    replyPrivate('Listener remote is unavailable right now. Try again shortly.');
   }
 }

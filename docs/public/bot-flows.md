@@ -43,9 +43,11 @@ The exact event fields available under `event.*` depend on the trigger that star
 
 Open **Bot Flows → Chat commands** (`/bots?tab=commands`) to add, edit, enable or delete custom `!name` replies. **Presets** offers editable starter replies. Custom replies are answered by media bots in their command channels; flow command triggers run in the flow engine. Commands are shared by bots on the same server.
 
-The read-only **Built-in commands** list shows names already handled by media bots: playback and queue controls such as `!play`, `!playlist`, `!queue` and `!stop`, radio and streaming commands such as `!radio`, `!stream` and `!tv`, request history (`!history`, `!again`), listener commands (`!voteskip`, `!remote`) and help commands. See [Media bots — Channel text commands](music-bots.md#channel-text-commands) for usage.
+The read-only **Built-in commands** list shows names already handled by media bots: playback and queue controls such as `!play`, `!playlist`, `!queue` and `!stop`, radio and streaming commands such as `!radio`, `!stream` and `!tv`, request history (`!history`, `!again`), listener commands (`!voteskip`, `!playlistvote`, `!remote`) and help commands. See [Media bots — Channel text commands](music-bots.md#channel-text-commands) for usage.
 
-**Built-in command permissions** controls who may change playback, queue/playlists, and video/IPTV. Each group defaults to **Everyone**, including existing installations after upgrading. Choose **Selected TeamSpeak server groups** and select one or more groups to restrict access. Membership in any selected group grants access; selecting no groups denies that command group to everyone. Saved groups that no longer exist appear as unavailable and can be removed.
+**Built-in command permissions** controls who may change playback, queue/playlists, and video/IPTV. Playback, queue and video each default to **Everyone**, including existing installations after upgrading. Choose **Selected TeamSpeak server groups** and select one or more groups to restrict access. Membership in any selected group grants access; selecting no groups denies that command group to everyone. Saved groups that no longer exist appear as unavailable and can be removed.
+
+**Queue playlists without a vote** is on the same card. It is not a command of its own, and there is no **Everyone** choice: it defaults to nobody, and an admin grants it only by selecting TeamSpeak server groups. It does not bypass **Queue and playlist changes**. With playlist voting on, someone who has both can queue a chat `!playlist` without a vote. With no groups selected, nobody can. See [Media bots — Playlist voting](music-bots.md#playlist-voting).
 
 Permissions use the server connection and virtual server selected in the main server picker. TeamSpeak group IDs belong to that virtual server; settings are shared by its media bots. These controls apply to built-in media chat commands. Custom replies and flow triggers retain their existing behavior.
 
@@ -58,11 +60,13 @@ Each built-in command belongs to one group:
 | **Playback and music controls** | `!here`, `!come`, `!play`, `!again`, `!stop`, `!pause`, `!skip`, `!next`, `!prev`, `!seek`; `!radio <id>`, `!vol <n>` / `!volume <n>` and `!repeat <mode>` when they change something |
 | **Queue and playlist changes** | `!queue <args>` (anything except `show`), `!add`, `!shuffle`, `!remove`, `!playlist <name>` / `!pl <name>` |
 | **Video and IPTV controls** | `!stream`, `!stopstream`, `!tv`, `!iptv` |
-| Always available | `!help`, `!commands`, `!np` / `!nowplaying`, `!history`, `!viewers`, `!channels`, `!lyrics`, the read-only forms (`!queue`, `!queue show`, `!vol`, `!volume`, `!playlist`, `!pl`, `!radio`, `!repeat` with no argument), `!voteskip` and `!remote` |
+| Always available | `!help`, `!commands`, `!np` / `!nowplaying`, `!history`, `!viewers`, `!channels`, `!lyrics`, the read-only forms (`!queue`, `!queue show`, `!vol`, `!volume`, `!playlist`, `!pl`, `!radio`, `!repeat` with no argument), `!voteskip`, `!playlistvote` and `!remote` |
 
 `!voteskip` lets human listeners in the bot's current channel vote to skip the current track even when direct skip is restricted. More than half of human listeners must vote; bots and ServerQuery clients do not count. Each identity gets one vote, and votes reset when the track changes.
 
-`!remote` is also open to everyone, but it only issues a link to a verified listener in the bot's channel. The page that link opens obeys these permissions: anyone can see the queue and search the library, while adding a song or pasting a link needs the **Queue and playlist changes** group. See [Media bots — Listener remote](music-bots.md#listener-remote).
+`!playlistvote yes` or `!playlistvote no` lets a verified human listener in the bot's channel vote on an open whole-playlist request. See [Media bots — Playlist voting](music-bots.md#playlist-voting).
+
+`!remote` is also open to everyone, but it only issues a link to a verified listener in the bot's channel. The page that link opens obeys these permissions: anyone can see the queue, search the library and browse shared playlists, while adding a song, pasting a link, searching YouTube Music or submitting a whole playlist needs the **Queue and playlist changes** group. See [Media bots — Listener remote](music-bots.md#listener-remote).
 
 **Command name clashes** warns when a name is used by more than one source: a custom reply, a flow command trigger or a built-in command. Comparison ignores case, surrounding spaces and leading `!` characters, so `!Play` clashes with `play`. The flow editor also shows **Command name clash** beside a conflicting command trigger. Rename the custom reply or trigger to avoid overlap; the warning does not block saving or change command routing.
 

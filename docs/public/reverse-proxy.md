@@ -37,12 +37,12 @@ Set `FRONTEND_URL` to the public frontend origin when it differs from the defaul
 
 ## WebSockets
 
-The application uses authenticated WebSockets. Ensure the reverse proxy supports WebSocket upgrade requests to the backend through the frontend/nginx path used by your deployment.
+The application uses authenticated WebSockets on `/ws`. Ensure the reverse proxy supports WebSocket upgrade requests for that path through the frontend/nginx used by your deployment. Do not send `Upgrade` or `Connection: upgrade` on `/api`. The bundled frontend and all-in-one nginx configs upgrade `/ws` only.
 
-A minimal outer NGINX location that only sets `X-Forwarded-For` is not enough. Prefer something like:
+A minimal outer NGINX location that only sets `X-Forwarded-For` is not enough for `/ws`. Prefer a plain `location /` plus a dedicated WebSocket location. Keep the long read timeout on `/ws` so idle WebSocket connections stay open, and keep the forwarded headers on both locations:
 
 ~~~nginx
-location / {
+location /ws {
     proxy_pass http://127.0.0.1:3000;  # frontend / all-in-one published port
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -51,6 +51,14 @@ location / {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_read_timeout 86400;
+}
+
+location / {
+    proxy_pass http://127.0.0.1:3000;  # frontend / all-in-one published port
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ~~~
 
@@ -62,7 +70,7 @@ In-browser preview signaling uses ordinary HTTPS API calls through the reverse p
 
 If the preview stays on “Connecting to stream…” and then reports an ICE failure or timeout:
 
-- confirm WebSocket/upgrade headers above so the rest of the live UI stays healthy;
+- confirm the `/ws` location above sends upgrade headers, and that `location /` does not, so the rest of the live UI stays healthy;
 - remember NGINX does **not** carry WebRTC media — only signaling;
 - set `WEBRTC_NAT1TO1_IP` to an IPv4 the **browser** can dial (LAN or Tailscale for local clients; public IPv4 when the browser is on the Internet), and publish `WEBRTC_UDP_PORT` with `WEBRTC_BIND_IP` on the Docker host (bind may differ from the advertised address when a firewall/NAT forwards UDP);
 - **avoid** advertising `127.0.0.1` unless the browser is on the Docker host itself;
@@ -97,9 +105,14 @@ admins see is described in [Media bots — Listener remote](music-bots.md#listen
 that prefix consistently for both the frontend and `/api/` routes. Links never
 derive their origin from a request's `Host` or forwarded headers.
 
-Links open `/remote`. That page reads the fragment once, removes it, and exchanges
-it for a short-lived session. The API contract is `docs/internal/listener-remote-api.md`
-in the source repository.
+Links open `/remote`. That path is its own HTML entry (`remote.html`), not the admin
+SPA shell. Stock nginx configs serve it with a strict Content-Security-Policy
+(self-only scripts, styles, and connections; no framing; no inline script). If you
+terminate TLS or rewrite paths at an outer reverse proxy, forward `/remote` to that
+entry unchanged and do not strip or override those security headers unless you
+replace them with an equivalent policy. The page reads the fragment once, removes
+it, and exchanges it for a short-lived session. The API contract is
+`docs/internal/listener-remote-api.md` in the source repository.
 
 `TRUST_PROXY` tells the backend which proxies may report a client's address in `X-Forwarded-For`. Without it, rate limits see the immediate proxy rather than individual listeners. The bundled images set a default, and a value you set always replaces it:
 
@@ -140,7 +153,10 @@ contain actions, bot/scope, outcomes and an identity fingerprint, never access
 credentials or pasted URLs.
 
 Run one backend replica: tokens, sessions and limits are bounded, process-local
-state and disappear on restart. Tokens last five minutes, sessions fifteen
-minutes absolutely. Leaving the bot channel or revocation invalidates access.
-Admins can revoke access through the documented API. No sidecar or database
-ports need publication for this feature.
+state and disappear on restart (including “remember this browser” cookies).
+Tokens last five minutes; sessions last twelve hours absolutely, or twenty-four
+with remember. Cookie sessions are host-only HttpOnly / SameSite=Strict under
+`/api/listener-remote` with CSRF and Origin checks on mutations. Leaving the
+bot channel or revocation invalidates access. Admins can revoke access through
+the documented API. No sidecar or database ports need publication for this
+feature.

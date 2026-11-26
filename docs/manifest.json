@@ -42,6 +42,13 @@
       "kind": "doc"
     },
     {
+      "source": "docs/public/beta.md",
+      "slug": "beta",
+      "title": "Beta releases",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
       "source": "docs/public/migrating-from-clusterzx.md",
       "slug": "migrating-from-clusterzx",
       "title": "Switching from clusterzx",
@@ -108,6 +115,13 @@
       "source": "docs/public/security.md",
       "slug": "security",
       "title": "Security",
+      "group": "Security & compatibility",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/public/discord-bridge.md",
+      "slug": "discord-bridge",
+      "title": "Discord bridge",
       "group": "Security & compatibility",
       "kind": "doc"
     },

@@ -64,6 +64,13 @@ export const settingsApi = {
   updateIptvNetwork: (allowedLocalHosts: string[]): Promise<{ allowedLocalHosts: string[] }> =>
     api.put('/settings/iptv-network', { allowedLocalHosts }).then((r) => r.data),
 
+  /** LAN hosts allowed for admin-configured radio stations. */
+  getRadioNetwork: (): Promise<{ allowedLocalHosts: string[] }> =>
+    api.get('/settings/radio-network').then((r) => r.data),
+
+  updateRadioNetwork: (allowedLocalHosts: string[]): Promise<{ allowedLocalHosts: string[] }> =>
+    api.put('/settings/radio-network', { allowedLocalHosts }).then((r) => r.data),
+
   /** Encoder test encodes run on the sidecar; demand-driven only (first call / refresh). */
   getVideoEncoders: (refresh = false): Promise<VideoEncoderCapabilities> =>
     api.get('/settings/video-encoders', { params: refresh ? { refresh: '1' } : undefined, timeout: 60000 })

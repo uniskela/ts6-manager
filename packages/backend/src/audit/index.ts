@@ -5,6 +5,7 @@ export {
   markPartial,
   classifyRemoteError,
   actorFromRequest,
+  buildRow,
   runRemoteAudited,
   AUDIT_RETENTION_MAX_AGE_DAYS,
   AUDIT_RETENTION_MAX_ROWS,

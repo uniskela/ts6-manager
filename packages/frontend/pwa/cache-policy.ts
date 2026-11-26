@@ -3,7 +3,7 @@ const APP_ROUTES = new Set([
   'dashboard', 'servers', 'channels', 'clients', 'server-groups', 'channel-groups',
   'permissions', 'bans', 'tokens', 'files', 'complaints', 'messages', 'logs',
   'instance', 'music-requests', 'bots', 'media-bots', 'music-bots', 'iptv',
-  'settings', 'login', 'setup', 'remote',
+  'settings', 'login', 'setup',
 ]);
 
 function isAppPath(pathname: string): boolean {

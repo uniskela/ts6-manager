@@ -5,6 +5,7 @@ import {
   isUnavailableMusicRequestError, musicRequestListWhere, pruneMusicRequests, replayReference,
 } from '../music-request-history.js';
 import { beginChatMediaRequest, enqueueMediaItem } from './queue.js';
+import { radioLocalAllowlist } from '../../utils/app-settings.js';
 
 // Metadata is untrusted and must not add chat markup, links, or extra lines.
 function historyText(value: string, limit: number): string {
@@ -57,7 +58,7 @@ export async function handleAgain(
   });
   if (!isCurrent()) return;
   if (!row) { await context.reply(bot, userClid, 'Request not found. Use !history to list requests.'); return; }
-  const ref = await replayReference(row);
+  const ref = await replayReference(row, { localAllowlist: await radioLocalAllowlist(context.prisma) });
   if (!isCurrent()) return;
   if (!ref.ok) {
     await markMusicRequestUnavailable(context.prisma, row.id);

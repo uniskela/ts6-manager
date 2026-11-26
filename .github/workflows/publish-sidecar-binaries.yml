@@ -64,10 +64,25 @@ jobs:
           fi
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/sidecar/go.mod
           cache-dependency-path: packages/sidecar/go.sum
+
+      # These archives are the published release artifacts. Fail fast if the
+      # resolved compiler is below the patched floor, so a stale cache or a
+      # changed go.mod cannot silently ship a vulnerable binary.
+      # See #693 (GO-2026-6859 / CVE-2026-97054).
+      - name: Assert the Go toolchain is patched
+        run: |
+          set -euo pipefail
+          MIN="go1.26.11"
+          GOT="$(go version | awk '{print $3}')"
+          echo "go version: $GOT (minimum $MIN)"
+          if [[ "$(printf '%s\n%s\n' "$MIN" "$GOT" | sort -V | head -n1)" != "$MIN" ]]; then
+            echo "Go toolchain $GOT is below the patched floor $MIN" >&2
+            exit 1
+          fi
 
       - name: Build archives
         env:

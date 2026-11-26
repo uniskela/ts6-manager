@@ -34,10 +34,50 @@ export function parseIconId(raw: unknown): number | null {
   return id === 0 ? null : id;
 }
 
+/**
+ * True for an SVG document: an optional BOM, XML declaration, comments, processing instructions
+ * and doctype, then the `<svg` root element. Scans forward only, so any input takes linear time.
+ */
+export function isSvgDocument(text: string): boolean {
+  let at = text.startsWith('\uFEFF') ? 1 : 0;
+  // Index just past the next `end` at or after `from`; -1 (stop) when there is none.
+  const skipPast = (end: string, from: number) => {
+    const found = from < 0 ? -1 : text.indexOf(end, from);
+    return found < 0 ? -1 : found + end.length;
+  };
+  while (at >= 0 && at < text.length) {
+    if (/\s/.test(text[at])) at++;
+    else if (text.startsWith('<?', at)) at = skipPast('?>', at + 2);
+    else if (text.startsWith('<!--', at)) at = skipPast('-->', at + 4);
+    else if (text.startsWith('<!DOCTYPE', at)) at = skipDoctype(at + 9);
+    else return /^<svg[\s/>]/.test(text.slice(at, at + 5));
+  }
+  return false;
+
+  // Index just past the doctype's closing `>`. Quoted literals, and comments and processing
+  // instructions in an internal `[ ... ]` subset, may contain `>`, `]` or quotes, so they are skipped whole.
+  function skipDoctype(from: number): number {
+    let inSubset = false;
+    for (let i = from; i >= 0 && i < text.length;) {
+      const ch = text[i];
+      if (ch === '"' || ch === "'") i = skipPast(ch, i + 1);
+      else if (inSubset && text.startsWith('<!--', i)) i = skipPast('-->', i + 4);
+      else if (inSubset && text.startsWith('<?', i)) i = skipPast('?>', i + 2);
+      else if (ch === '[' && !inSubset) { inSubset = true; i++; }
+      else if (ch === ']' && inSubset) { inSubset = false; i++; }
+      else if (ch === '>' && !inSubset) return i + 1;
+      else i++;
+    }
+    return -1;
+  }
+}
+
 export function iconImageMime(image: Buffer): string | null {
   if (image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
   if (image[0] === 255 && image[1] === 216 && image[2] === 255) return 'image/jpeg';
   if (['GIF87a', 'GIF89a'].includes(image.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  // TeamSpeak 6 clients show SVG icons too (#572).
+  if (isSvgDocument(image.toString('utf8'))) return 'image/svg+xml';
   return null;
 }
 
@@ -120,9 +160,10 @@ iconRoutes.get('/:id', async (req: Request, res: Response, next) => {
       cachePreview(key, image);
     }
     const mime = iconImageMime(image);
-    if (!mime) throw new AppError(415, 'This icon is not a PNG, JPEG or GIF image');
+    if (!mime) throw new AppError(415, 'This icon is not a PNG, JPEG, GIF or SVG image');
     res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Anyone with TeamSpeak's icon permission can upload an SVG, so this response may never run script or load anything.
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     res.type(mime).send(image);
   } catch (err) {
@@ -133,7 +174,7 @@ iconRoutes.get('/:id', async (req: Request, res: Response, next) => {
 });
 
 const iconUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ICON_BYTES, files: 1, fields: 0 } }).single('file');
-const UPLOAD_HINT = 'Upload exactly one PNG, JPEG or GIF image';
+const UPLOAD_HINT = 'Upload exactly one PNG, JPEG, GIF or SVG image';
 
 // POST .../icons — upload one image (multipart field `file`); responds with its icon id.
 iconRoutes.post('/', requireRole('admin'), (req, res, next) => {
@@ -145,7 +186,7 @@ iconRoutes.post('/', requireRole('admin'), (req, res, next) => {
   try {
     const image = req.file?.buffer;
     if (!image || image.length === 0) throw new AppError(400, UPLOAD_HINT);
-    if (!iconImageMime(image)) throw new AppError(400, 'Icon must be a PNG, JPEG or GIF image');
+    if (!iconImageMime(image)) throw new AppError(400, 'Icon must be a PNG, JPEG, GIF or SVG image');
     const id = crc32(image);
     if (id === 0) throw new AppError(400, 'This image cannot be used as an icon');
     const sid = getSid(req);

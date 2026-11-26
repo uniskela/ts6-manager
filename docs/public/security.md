@@ -21,15 +21,17 @@ Secret fields are not populated back into edit forms. Leaving a secret field bla
 
 The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply.
 
-WebSocket connections require application authentication and are scoped to the servers the user may access.
+An administrator password reset, or disabling a user, revokes that account's refresh tokens so existing sessions cannot be renewed. After a reset the user must sign in again with the new password; a disabled account cannot sign in until an administrator re-enables it. A password reset does **not** immediately invalidate existing access JWTs: they remain valid until they expire (15 minutes by default via `JWT_ACCESS_EXPIRY`). Disabling an account rejects authenticated HTTP requests and new WebSocket connections even when an unexpired access JWT is presented.
+
+WebSocket connections require application authentication when they are established and are scoped to the servers the user may access. Existing WebSocket connections are **not** automatically closed after a password reset, account disable, or permission change. After a password reset, an existing unexpired access JWT may still be used to open a **new** WebSocket connection until that JWT expires.
 
 ## Listener remote
 
-The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once; the session it opens lasts 15 minutes in total and ends early if the listener leaves the channel. Only hashes of the credentials are kept in memory, and a backend restart ends every session. Pasted links go through the same outbound-request checks as other media URLs, without the IPTV local-hosts exception. It needs an HTTPS Public URL and, behind an outer reverse proxy, a matching `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
+The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once. Exchanging it sets a host-only `HttpOnly` / `Secure` / `SameSite=Strict` session cookie (12 hours by default, or 24 hours when the listener chooses “Remember this browser”). The session secret is never returned to JavaScript, stored in `localStorage`, or put in URLs. Cookie mutations require CSRF and Origin checks. Every protected action still verifies the live TeamSpeak UID, channel, and bot connection; leaving the channel, bot moves, or admin revoke end control. Credentials are hashed in process memory only — **a backend restart ends every remembered browser session**. The bot also posts a short channel acknowledgement that a private link was sent (never the link itself). Pasted links go through the same outbound-request checks as other media URLs, without the IPTV or radio local-hosts exception. It needs an HTTPS Public URL and, behind an outer reverse proxy, a matching `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
 
 ## Outbound requests
 
-HTTP automation actions and FFmpeg/media URL paths include SSRF protections; media downloads are also checked at connection time (see [Media downloads](#media-downloads)). An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog; that list is IPTV-only ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
+HTTP automation actions and FFmpeg/media URL paths include SSRF protections; media downloads are also checked at connection time (see [Media downloads](#media-downloads)). An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog, and specific LAN radio hosts from the radio tab's **Local hosts** dialog; each list covers only its own source type ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network), [Media bots](music-bots.md#radio-stations-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
 
 Do not design deployments or automations around bypassing these checks.
 
@@ -47,6 +49,16 @@ yt-dlp handles media links for music, video, library downloads, playlist imports
 If the proxy cannot start, downloads fail instead of connecting directly.
 
 Video that yt-dlp resolves for direct streaming (YouTube direct playback, Twitch) is played by the media sidecar. The sidecar connects through its own checking proxy (`SIDECAR_EGRESS_PROXY`). Before handing a URL over, the backend checks its address and limits it to ports 80 and 443. Redirects and playlist segments that the sidecar's ffmpeg then follows are checked by the sidecar's proxy under its own rules. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
+
+### Radio stations
+
+Radio stations are operator-configured sources, and the backend's own ffmpeg opens them directly — they do **not** go through the media egress proxy. `MEDIA_EGRESS_PROXY=off` therefore has no effect on radio. The address is checked before the stream opens, and again for the ICY metadata request:
+
+- a station on a public address is opened as configured;
+- a station on a private or shared address (for example a home server at `192.168.1.20`) is refused with `Private/reserved IP addresses are blocked`, unless an administrator allowed that host in the radio tab's **Local hosts** dialog;
+- loopback, link-local and cloud metadata addresses are refused for every station, with or without an allowance.
+
+The allowance covers admin-configured stations only. A URL a user typed or pasted — a `!play` link, a listener-remote link, a Bot Flow HTTP request — keeps the strict rule and stays refused.
 
 **What this does not cover.** The proxy controls traffic that yt-dlp and ffmpeg send through it. It is not an operating-system boundary: a downloader that ignored its proxy settings, through a bug or a future change, would not be stopped by it. The proxy also cannot recognise a NAT64 prefix that a network operator chose instead of the standard `64:ff9b::/96`. This applies to every deployment today, including the split Docker stack, the all-in-one image and a backend run outside Docker. Running downloads in a separate container with no route except the proxy is planned for the split stack ([#476](https://github.com/uniskela/ts6-manager/issues/476)). The all-in-one image and native installs will continue to rely on the proxy alone.
 
@@ -81,10 +93,10 @@ The standard compose file keeps sidecar port 9800 internal. The all-in-one image
 
 Production Node images omit npm, npx, pnpm, Corepack, and esbuild build tooling.
 
-CI rebuilds all release images and scans them with Trivy. The release gate fails when a HIGH or CRITICAL finding has an available fix. Unfixed findings remain visible in the full scan inventory rather than being hidden by ignore rules.
+CI rebuilds all release images and scans them with Trivy. The release gate fails when a HIGH or CRITICAL finding has an available fix. Unfixed findings remain visible in the full scan inventory rather than being hidden by ignore rules. Maintainer-approved prereleases reuse the same scan before they reach GHCR; they never move `latest`. See [Beta releases](beta.md).
 
 ## TeamSpeak Query
 
-TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need beta13 guest Query access.
+TS6 Manager requires authenticated WebQuery and optional authenticated SSH Query. It does not need the guest Query access that beta13 and later enable by default.
 
-Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for beta13 settings.
+Restrict TeamSpeak Query ports to trusted management networks and see [TeamSpeak compatibility](teamspeak-compatibility.md) for Query settings.

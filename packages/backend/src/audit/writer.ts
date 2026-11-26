@@ -234,6 +234,15 @@ const LISTENER_REMOTE_RESULTS: Readonly<Record<string, AdminAuditResultCode>> = 
   cancelled: 'cancelled',
   timeout: 'timeout',
   unavailable: 'unavailable',
+  // B3 playlist-request refusals: public codes stay specific; attempt row is validation_failed.
+  playlist_not_requestable: 'validation_failed',
+  vote_running: 'validation_failed',
+  playlist_empty: 'validation_failed',
+  request_too_large: 'validation_failed',
+  // C1a/C2 duration refusals: public API codes stay specific; attempt row is validation_failed.
+  too_long: 'validation_failed',
+  live_not_allowed: 'validation_failed',
+  duration_unknown: 'validation_failed',
 };
 
 /** Map unknown errors to allow-listed result codes (no message leakage). */

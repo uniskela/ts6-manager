@@ -1,6 +1,6 @@
 import net from 'net';
 import tls from 'tls';
-import { isPrivateIP } from '../../utils/url-validator.js';
+import { isPrivateIP, parseLocalHostAllowlist, type LocalHostAllowlist } from '../../utils/url-validator.js';
 
 /**
  * Fetch the current StreamTitle from an ICY/Shoutcast/Icecast radio stream.
@@ -19,12 +19,15 @@ import { isPrivateIP } from '../../utils/url-validator.js';
  * 5. Read metadata string, parse StreamTitle
  * 6. Close connection
  */
-export async function fetchIcyMetadata(streamUrl: string, timeoutMs = 10000): Promise<string | null> {
+export async function fetchIcyMetadata(streamUrl: string, timeoutMs = 10000, localHosts?: readonly string[]): Promise<string | null> {
   let currentUrl = streamUrl;
   const maxRedirects = 5;
+  const allowlist: LocalHostAllowlist | undefined = localHosts?.length
+    ? parseLocalHostAllowlist(localHosts).allowlist
+    : undefined;
 
   for (let i = 0; i <= maxRedirects; i++) {
-    const result = await fetchIcySingle(currentUrl, timeoutMs);
+    const result = await fetchIcySingle(currentUrl, timeoutMs, allowlist);
     if (result.redirect) {
       currentUrl = result.redirect;
       continue;
@@ -39,7 +42,7 @@ interface IcyResult {
   redirect?: string;
 }
 
-function fetchIcySingle(streamUrl: string, timeoutMs: number): Promise<IcyResult> {
+function fetchIcySingle(streamUrl: string, timeoutMs: number, localAllowlist?: LocalHostAllowlist): Promise<IcyResult> {
   return new Promise((resolve) => {
     let resolved = false;
     const url = new URL(streamUrl);
@@ -57,8 +60,9 @@ function fetchIcySingle(streamUrl: string, timeoutMs: number): Promise<IcyResult
       `Connection: close\r\n` +
       `\r\n`;
 
-    // C4: Block private/reserved IPs
-    if (isPrivateIP(host)) {
+    // C4: Block private/reserved IPs, unless the operator allowed the host
+    // for admin-configured radio stations.
+    if (isPrivateIP(host) && !localAllowlist?.permits(host, host.replace(/^\[|\]$/g, ''))) {
       return resolve({ title: null });
     }
 

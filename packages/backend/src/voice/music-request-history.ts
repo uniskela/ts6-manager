@@ -1,7 +1,7 @@
 import type { QueueItem } from './playlist/queue.js';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import { resolvePathUnderMusicDir } from './streaming/video-download.js';
-import { validateUrl } from '../utils/url-validator.js';
+import { validateUrl, type LocalHostAllowlist } from '../utils/url-validator.js';
 import { AppError } from '../middleware/error-handler.js';
 
 /** Newest rows kept for one bot on one connection. */
@@ -165,9 +165,13 @@ export async function replayReference(
   deps: {
     validateUrl?: (url: string) => Promise<{ valid: boolean; error?: string }>;
     resolveLocal?: (filePath: string) => string;
+    /**
+     * Operator-approved LAN hosts for admin-configured radio stations. Only
+     * radio rows may use them; a pasted URL stays under the strict rule.
+     */
+    localAllowlist?: LocalHostAllowlist;
   } = {},
 ): Promise<ReplayReference> {
-  const validate = deps.validateUrl ?? validateUrl;
   const resolveLocal = deps.resolveLocal ?? resolvePathUnderMusicDir;
   if (row.source === 'local') {
     try {
@@ -177,7 +181,11 @@ export async function replayReference(
     }
   }
   if (!/^https?:\/\//i.test(row.url)) return { ok: false, error: MEDIA_UNAVAILABLE };
-  const validation = await validate(row.url);
+  // A radio station may point at an allowed LAN host; every other source uses
+  // the strict public-address rule.
+  const validation = row.source === 'radio'
+    ? await validateUrl(row.url, { allowedProtocols: ['http:', 'https:'], localAllowlist: deps.localAllowlist })
+    : await (deps.validateUrl ?? validateUrl)(row.url);
   if (!validation.valid) {
     if (validation.error?.endsWith('could not be resolved')) {
       throw new AppError(503, 'Media source could not be resolved. Try again.', undefined, { retryable: true });

@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import type { MediaCommandPermissions } from '@ts6/common';
 
 // Layout-only checks for the wide-viewport treatment of Settings > Appearance,
 // Settings > YouTube and the Bot Flows > Chat commands permissions card.
@@ -40,10 +41,13 @@ async function mockYoutube(page: Page) {
   }));
 }
 
-type Policy = Record<'playback' | 'queue' | 'video', { mode: 'everyone' } | { mode: 'server_groups'; serverGroupIds: number[] }>;
+type Policy = MediaCommandPermissions;
 
 async function mockPermissions(page: Page, initial?: Policy) {
-  const permissions: Policy = initial ?? { playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' } };
+  const permissions: Policy = initial ?? {
+    playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' },
+    playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
+  };
   await page.route('**/api/servers', async (route) => {
     if (route.request().method() === 'GET') return route.fulfill({ json: [{ id: 1, name: 'Primary server', host: 'primary.invalid' }] });
     return route.fallback();
@@ -117,6 +121,7 @@ for (const size of widths) {
       playback: { mode: 'server_groups', serverGroupIds: [6, 8] },
       queue: { mode: 'everyone' },
       video: { mode: 'server_groups', serverGroupIds: [] },
+      playlistBypass: { mode: 'server_groups', serverGroupIds: [] },
     });
     await page.setViewportSize(size);
     await signInAsAdmin(page, request);
@@ -124,16 +129,19 @@ for (const size of widths) {
     const groups = page.getByTestId('media-permission-groups');
     await expect(groups).toBeVisible();
     const fieldsets = groups.locator('fieldset');
-    await expect(fieldsets).toHaveCount(3);
+    await expect(fieldsets).toHaveCount(4);
     const boxes = [];
-    for (let i = 0; i < 3; i++) boxes.push((await fieldsets.nth(i).boundingBox())!);
+    for (let i = 0; i < 4; i++) boxes.push((await fieldsets.nth(i).boundingBox())!);
     if (wide) {
-      expect(boxes[1].x).toBeGreaterThan(boxes[0].x + boxes[0].width - 1);
-      expect(boxes[2].x).toBeGreaterThan(boxes[1].x + boxes[1].width - 1);
-      expect(Math.abs(boxes[0].y - boxes[2].y)).toBeLessThan(2);
+      for (let i = 1; i < boxes.length; i++) {
+        expect(boxes[i]!.x).toBeGreaterThan(boxes[i - 1]!.x + boxes[i - 1]!.width - 1);
+        expect(Math.abs(boxes[0]!.y - boxes[i]!.y)).toBeLessThan(2);
+      }
     } else {
-      expect(Math.abs(boxes[0].x - boxes[1].x)).toBeLessThan(2);
-      expect(boxes[1].y).toBeGreaterThanOrEqual(boxes[0].y + boxes[0].height - 1);
+      for (let i = 1; i < boxes.length; i++) {
+        expect(Math.abs(boxes[0]!.x - boxes[i]!.x)).toBeLessThan(2);
+        expect(boxes[i]!.y).toBeGreaterThanOrEqual(boxes[i - 1]!.y + boxes[i - 1]!.height - 1);
+      }
     }
     // Restricted-mode controls stay inside their own group card.
     const playback = fieldsets.nth(0);

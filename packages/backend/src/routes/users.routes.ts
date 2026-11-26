@@ -71,6 +71,12 @@ userRoutes.put('/:userId', async (req: Request, res: Response, next) => {
       data.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
 
+    // Revoke refresh tokens when credentials change or the account is disabled.
+    // This does not immediately invalidate unexpired access JWTs or established WebSockets.
+    const passwordChanged = Boolean(req.body.password);
+    const explicitlyDisabled = req.body.enabled === false;
+    const revokeRefreshTokens = passwordChanged || explicitlyDisabled;
+
     await recordLocalSuccess(
       prisma,
       {
@@ -80,6 +86,9 @@ userRoutes.put('/:userId', async (req: Request, res: Response, next) => {
       },
       async (tx) => {
         await tx.user.update({ where: { id }, data });
+        if (revokeRefreshTokens) {
+          await tx.refreshToken.deleteMany({ where: { userId: id } });
+        }
       },
     );
     res.status(204).send();

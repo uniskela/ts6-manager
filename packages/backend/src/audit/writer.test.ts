@@ -217,4 +217,16 @@ describe('classifyRemoteError for listener remote refusals', () => {
     assert.deepEqual(classifyRemoteError(new ListenerRemoteError(429, 'rate_limited', 'A media request is already pending.')), { outcome: 'failure', resultCode: 'rate_limited' });
     assert.deepEqual(classifyRemoteError(new ListenerRemoteError(409, 'cancelled', 'Playback was stopped.')), { outcome: 'failure', resultCode: 'cancelled' });
   });
+
+  it('records C1a duration refusals as validation_failed', async () => {
+    const { ListenerRemoteError } = await import('../voice/listener-remote.js');
+    const { classifyRemoteError } = await import('./writer.js');
+    for (const code of ['too_long', 'live_not_allowed', 'duration_unknown'] as const) {
+      assert.deepEqual(
+        classifyRemoteError(new ListenerRemoteError(422, code, 'refused')),
+        { outcome: 'failure', resultCode: 'validation_failed' },
+        code,
+      );
+    }
+  });
 });

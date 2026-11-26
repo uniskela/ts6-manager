@@ -10,6 +10,17 @@ export interface Binding {
   uid: string;
 }
 
+/**
+ * Why a grant was removed. Search clears on every reason; playlist votes cancel
+ * only for `revoked` / `rejected` (#442: expiry alone must not cancel a vote).
+ */
+export type GrantInvalidationReason =
+  | 'expired'
+  | 'replaced'
+  | 'revoked'
+  | 'rejected'
+  | 'error';
+
 export class ListenerRemoteError extends Error {
   /** `retryAfter`: whole seconds until a rate limit's window resets. */
   constructor(public readonly status: number, public readonly code: string, message: string, public readonly retryAfter?: number) {
@@ -27,7 +38,10 @@ interface Grant {
 }
 
 const TOKEN_TTL = 5 * 60_000;
-const SESSION_TTL = 15 * 60_000;
+/** Default browser session (absolute). Activity does not extend. */
+export const SESSION_TTL_MS = 12 * 60 * 60_000;
+/** Optional "remember this browser" absolute cap. */
+export const REMEMBER_SESSION_TTL_MS = 24 * 60 * 60_000;
 const MAX_ENTRIES = 10_000;
 const RATE_WINDOW = 60_000;
 /** One window per client address: all requests, and exchanges. */
@@ -59,12 +73,23 @@ export class ListenerRemoteService {
    * a grant, so unknown credentials cannot fill this store.
    */
   private readonly credentialRates: RateWindows;
+  /** Optional hooks for search maps / playlist votes tied to a grant's lifetime. */
+  private readonly grantInvalidated: Array<(binding: Binding, reason: GrantInvalidationReason) => void> = [];
 
   /** A test clock drives both credential lifetimes and rate windows; otherwise rate windows are monotonic. */
   constructor(now?: () => number) {
     this.now = now ?? Date.now;
     this.rates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now ?? monotonicNow);
     this.credentialRates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now ?? monotonicNow);
+  }
+
+  /**
+   * Register a listener for grant removal. Multiple handlers are supported
+   * (search + playlist vote). Handlers receive a reason so votes can ignore
+   * ordinary expiry / !remote replacement while search still clears.
+   */
+  onGrantInvalidated(handler: (binding: Binding, reason: GrantInvalidationReason) => void): void {
+    this.grantInvalidated.push(handler);
   }
 
   /** `ip` is a client address key (see utils/client-address); only its hash is kept. */
@@ -95,6 +120,13 @@ export class ListenerRemoteService {
     return grant && grant.expiresAt > this.now() ? grant.binding : undefined;
   }
 
+  /** Absolute session expiry ms, or undefined when the credential is unknown/expired. */
+  peekSessionExpiry(session: string | undefined): number | undefined {
+    if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(session)) return undefined;
+    const grant = this.sessions.get(hash(session));
+    return grant && grant.expiresAt > this.now() ? grant.expiresAt : undefined;
+  }
+
   checkRequest(session: string): void {
     this.prune();
     const grant = this.sessions.get(this.credentialHash(session));
@@ -113,7 +145,7 @@ export class ListenerRemoteService {
     this.limit(this.credentialRates, hash(key), IDENTITY_LIMITS, ISSUES);
     const previous = this.grants.get(key);
     if (!previous && this.grants.size >= MAX_ENTRIES) this.unavailable();
-    if (previous) this.remove(previous);
+    if (previous) this.remove(previous, 'replaced');
     const token = randomBytes(32).toString('base64url');
     const grant: Grant = {
       binding: Object.freeze({ ...binding }), expiresAt: this.now() + TOKEN_TTL, tokenHash: hash(token),
@@ -123,7 +155,11 @@ export class ListenerRemoteService {
     return { token, expiresAt: grant.expiresAt };
   }
 
-  async exchange(token: string, validate: ValidateBinding): Promise<{ session: string; expiresAt: number; binding: Binding }> {
+  async exchange(
+    token: string,
+    validate: ValidateBinding,
+    options: { remember?: boolean } = {},
+  ): Promise<{ session: string; expiresAt: number; binding: Binding; remember: boolean }> {
     this.prune();
     const tokenHash = this.credentialHash(token);
     const grant = this.tokens.get(tokenHash);
@@ -136,9 +172,10 @@ export class ListenerRemoteService {
     await this.validate(grant, validate);
     const session = randomBytes(32).toString('base64url');
     grant.sessionHash = hash(session);
-    grant.expiresAt = this.now() + SESSION_TTL;
+    const remember = options.remember === true;
+    grant.expiresAt = this.now() + (remember ? REMEMBER_SESSION_TTL_MS : SESSION_TTL_MS);
     this.sessions.set(grant.sessionHash, grant);
-    return { session, expiresAt: grant.expiresAt, binding: { ...grant.binding } };
+    return { session, expiresAt: grant.expiresAt, binding: { ...grant.binding }, remember };
   }
 
   async authenticate(session: string, validate: ValidateBinding): Promise<Binding> {
@@ -156,7 +193,7 @@ export class ListenerRemoteService {
     let count = 0;
     for (const grant of this.grants.values()) {
       if (grant.binding.botId === botId && (uid === undefined || grant.binding.uid === uid)) {
-        this.remove(grant);
+        this.remove(grant, 'revoked');
         count++;
       }
     }
@@ -168,7 +205,7 @@ export class ListenerRemoteService {
     for (const grant of this.grants.values()) {
       const binding = grant.binding;
       if (binding.serverConfigId === serverConfigId && binding.virtualServerId === virtualServerId && binding.clid === clid) {
-        this.remove(grant);
+        this.remove(grant, 'revoked');
       }
     }
   }
@@ -178,11 +215,20 @@ export class ListenerRemoteService {
     try {
       valid = await validate({ ...grant.binding });
     } catch {
-      this.remove(grant);
+      // Query failure: drop the credential, but do not treat as verified departure.
+      this.remove(grant, 'error');
       throw denied();
     }
-    if (!valid || grant.expiresAt <= this.now() || this.grants.get(bindingKey(grant.binding)) !== grant) {
-      this.remove(grant);
+    if (grant.expiresAt <= this.now()) {
+      this.remove(grant, 'expired');
+      throw denied();
+    }
+    if (this.grants.get(bindingKey(grant.binding)) !== grant) {
+      this.remove(grant, 'replaced');
+      throw denied();
+    }
+    if (!valid) {
+      this.remove(grant, 'rejected');
       throw denied();
     }
   }
@@ -192,16 +238,18 @@ export class ListenerRemoteService {
     return hash(credential);
   }
 
-  private remove(grant: Grant): void {
+  private remove(grant: Grant, reason: GrantInvalidationReason): void {
     const key = bindingKey(grant.binding);
     if (this.grants.get(key) === grant) this.grants.delete(key);
     if (grant.tokenHash) this.tokens.delete(grant.tokenHash);
     if (grant.sessionHash) this.sessions.delete(grant.sessionHash);
+    const binding = { ...grant.binding };
+    for (const handler of this.grantInvalidated) handler(binding, reason);
   }
 
   private prune(): void {
     const now = this.now();
-    for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant);
+    for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant, 'expired');
     this.rates.prune();
     this.credentialRates.prune();
   }

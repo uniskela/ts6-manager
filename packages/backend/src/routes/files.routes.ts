@@ -194,7 +194,7 @@ function getBridgeGeneration(req: Request): number {
 }
 
 // Recursively summarize file trees for the channel selector (bounded).
-fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
+fileRoutes.get('/summary', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const rawCids = String(req.query.cids || '');
     const requested = [...new Set(rawCids.split(',').filter(Boolean).map(Number))];
@@ -243,7 +243,7 @@ fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
 
 // List files in a channel directory
 // Uses shared SSH connection because ft* commands are not supported via WebQuery HTTP
-fileRoutes.get('/:cid', async (req: Request, res: Response, next) => {
+fileRoutes.get('/:cid', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const result = await sshExecute(req, 'ftgetfilelist', {
       cid: String(req.params.cid),

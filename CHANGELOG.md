@@ -2,6 +2,94 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.12.0](https://github.com/uniskela/ts6-manager/compare/v1.11.4...v1.12.0) (2026-11-26)
+
+
+### Features
+
+* **music:** !playlistvote yes/no on shared B3 runtime ([#629](https://github.com/uniskela/ts6-manager/issues/629)) ([4f28849](https://github.com/uniskela/ts6-manager/commit/4f288492b84b3ebcf34db7de14e285612541dec4))
+* **music:** music search with listener duration rules ([#603](https://github.com/uniskela/ts6-manager/issues/603)) ([ac8e7a8](https://github.com/uniskela/ts6-manager/commit/ac8e7a87ce89f6359f0e50fef1c1fe05d84518a5))
+* **music:** playlist vote settings ([#605](https://github.com/uniskela/ts6-manager/issues/605)) ([6633aac](https://github.com/uniskela/ts6-manager/commit/6633aac42358e4f157a010630d8eac844fa07440))
+* **music:** playlist vote state machine ([#602](https://github.com/uniskela/ts6-manager/issues/602)) ([6e12f0c](https://github.com/uniskela/ts6-manager/commit/6e12f0c1b5c41a8432bfc7171cfd680314ba7965))
+* **playlists:** choose which playlists the listener remote can see ([#604](https://github.com/uniskela/ts6-manager/issues/604)) ([7d1627a](https://github.com/uniskela/ts6-manager/commit/7d1627ac6841c2e315a56acfa3d500fb76854377))
+* **radio:** allow LAN radio stations from an admin host list ([#671](https://github.com/uniskela/ts6-manager/issues/671)) ([6137b73](https://github.com/uniskela/ts6-manager/commit/6137b739036dfcc244e2e8f1a154871f6a4ab9c8))
+* **remote:** apply the 15-minute and no-live rules to pasted links ([e5bbafa](https://github.com/uniskela/ts6-manager/commit/e5bbafa8acccf02d74010d5d37eeab4dda842599))
+* **remote:** browse shared playlists ([7b483b8](https://github.com/uniskela/ts6-manager/commit/7b483b800947c71d92d0416753cad8dedc4d6150))
+* **remote:** HttpOnly cookie sessions, CSRF, and !remote channel ack ([7c3ac83](https://github.com/uniskela/ts6-manager/commit/7c3ac83189e820e215d81fe4fd33a8d5d78bec20))
+* **remote:** playlist request and voting UI ([#632](https://github.com/uniskela/ts6-manager/issues/632)) ([f75baa7](https://github.com/uniskela/ts6-manager/commit/f75baa79eb7c81212dbb6b19d55991a6ec535cb8))
+* **remote:** Playlists view ([40afc3e](https://github.com/uniskela/ts6-manager/commit/40afc3e87f86352b4b0bf437282384fd839278d7))
+* **remote:** propose and vote on a whole playlist ([9ec216a](https://github.com/uniskela/ts6-manager/commit/9ec216a5b0acc0c75539fb449d0c62efbf8ff6cb))
+* **remote:** search and queue a result ([68aa0a9](https://github.com/uniskela/ts6-manager/commit/68aa0a9853e48d16b350c9b4ac5acfc4ee83becb))
+* **remote:** Search tab ([#617](https://github.com/uniskela/ts6-manager/issues/617)) ([22c5e8a](https://github.com/uniskela/ts6-manager/commit/22c5e8a06435f26cdea13fff5ca862f6cf42d811))
+* **remote:** serve the listener remote as its own page ([#606](https://github.com/uniskela/ts6-manager/issues/606)) ([bdd8c32](https://github.com/uniskela/ts6-manager/commit/bdd8c32ca415f585ecd59d128102e22c61603b28))
+* **ui:** brand icons in the cyan-to-violet style shared with the website ([#630](https://github.com/uniskela/ts6-manager/issues/630)) ([83235ab](https://github.com/uniskela/ts6-manager/commit/83235abd31eb8f6515ce979acc4d1834ac271219))
+* **ui:** playlist visibility in the media library ([ac8bf26](https://github.com/uniskela/ts6-manager/commit/ac8bf2669a667ba122f133d78f617637402cdb2a))
+
+
+### Bug Fixes
+
+* **auth:** atomic refresh rotation and cross-tab coordination ([#620](https://github.com/uniskela/ts6-manager/issues/620)) ([582763b](https://github.com/uniskela/ts6-manager/commit/582763bd542c5a5fc953a538b25796c5203b731d))
+* **auth:** fence LAN cross-tab refresh election by participation ([b913d0e](https://github.com/uniskela/ts6-manager/commit/b913d0e46d05b7982aa4b41e468ce7aad2d87283))
+* **auth:** prevent refresh cleanup from blocking admin operations ([de978a9](https://github.com/uniskela/ts6-manager/commit/de978a9e9bf7ff8fbd70fe78fd93adb05ee5fedf))
+* **auth:** prevent stale cross-tab persist writes and stabilise refresh tests ([4af6825](https://github.com/uniskela/ts6-manager/commit/4af6825db46d22fda866bca45de2ae0a5efc25de))
+* **auth:** reduce SQLite contention during administrative revocation ([973a51c](https://github.com/uniskela/ts6-manager/commit/973a51c3dbe9a4e60ad7adb96ed558dab938ae09))
+* **auth:** revoke refresh tokens on admin password reset or disable ([895ab5b](https://github.com/uniskela/ts6-manager/commit/895ab5b3a2a18bfa3e49bf2157b16daf24352950))
+* **bot-engine:** count Auto-Rank online time from clientinfo, so ranks are assigned on TS6 and TS3 ([#660](https://github.com/uniskela/ts6-manager/issues/660)). The first check after updating credits each online client's current session in full, so some promotions may happen at once; time from sessions that ended before the update was never recorded and is not recovered ([65eeece](https://github.com/uniskela/ts6-manager/commit/65eeece2b91196879b810577a193cde3ae679042))
+* **deps:** upgrade ws and react-query without dropping pnpm overrides ([#645](https://github.com/uniskela/ts6-manager/issues/645)) ([d33abaa](https://github.com/uniskela/ts6-manager/commit/d33abaa7712b380102308c8bb76668c5c1c6d35d))
+* enforce viewer authorization on server reads ([#711](https://github.com/uniskela/ts6-manager/issues/711)) ([a0b527e](https://github.com/uniskela/ts6-manager/commit/a0b527e9a1061f7110efa3b7d9960ff45bac32d6))
+* **music:** gate chat playlist requests with voting ([#676](https://github.com/uniskela/ts6-manager/issues/676)) ([93c14a9](https://github.com/uniskela/ts6-manager/commit/93c14a96308356c8ce85209ec1fd13d865426744))
+* **music:** persist bot volume across sessions ([#637](https://github.com/uniskela/ts6-manager/issues/637)) ([8b7dd76](https://github.com/uniskela/ts6-manager/commit/8b7dd76f8854f32a28f29f134d94ae48918829c5))
+* **radio:** restrict LAN host allowance to radio sources ([2c89910](https://github.com/uniskela/ts6-manager/commit/2c89910413dc161b4bcb124e4878df280335122f))
+* **remote:** fall back to YouTube search when Music lacks duration ([#639](https://github.com/uniskela/ts6-manager/issues/639)) ([a3c568e](https://github.com/uniskela/ts6-manager/commit/a3c568eae2a6a2e63760dcce47e0dabdb00c1742))
+* **remote:** isolate listener presence and announce playlist votes ([#644](https://github.com/uniskela/ts6-manager/issues/644)) ([6df7f40](https://github.com/uniskela/ts6-manager/commit/6df7f402ba02bbb6076bcc4b6cf95e7e3e962154))
+* **remote:** preserve queue head when idle playlist vote queues ([#634](https://github.com/uniskela/ts6-manager/issues/634)) ([a36205c](https://github.com/uniskela/ts6-manager/commit/a36205c8db9db200caacdcfa603eec690c44f53b))
+* **remote:** record request history on deadline playlist queue ([#628](https://github.com/uniskela/ts6-manager/issues/628)) ([83d65c7](https://github.com/uniskela/ts6-manager/commit/83d65c76900be712de1e9898cadd8e059ed428fa))
+* **remote:** searchMusic follows the add permission ([#631](https://github.com/uniskela/ts6-manager/issues/631)) ([2b2972e](https://github.com/uniskela/ts6-manager/commit/2b2972e52b9189928a397f80d8d2d778da41a0b6))
+* route in-channel command replies through SSH helper ([cb0d4c0](https://github.com/uniskela/ts6-manager/commit/cb0d4c0ba187cf2ab3113ee8703f57cd6986b59d))
+* **sidecar:** raise the Go toolchain floor past GO-2026-6859 ([#712](https://github.com/uniskela/ts6-manager/issues/712)) ([d45520f](https://github.com/uniskela/ts6-manager/commit/d45520fb17e9fce86090837e08e003ed96be2952)), closes [#693](https://github.com/uniskela/ts6-manager/issues/693)
+
+## [1.11.4](https://github.com/uniskela/ts6-manager/compare/v1.11.3...v1.11.4) (2026-11-03)
+
+
+### Bug Fixes
+
+* **deps:** repair November Dependabot groups and patch follow-redirects ([#582](https://github.com/uniskela/ts6-manager/issues/582)) ([b48e6f1](https://github.com/uniskela/ts6-manager/commit/b48e6f16e9e48ecacf4910afc4f30ad1855263bb))
+* **deps:** update yt-dlp to 2026.10.26 ([#583](https://github.com/uniskela/ts6-manager/issues/583)) ([b7aaf52](https://github.com/uniskela/ts6-manager/commit/b7aaf524615450993fdaf699fe3ff5610d720304))
+* keep Deno installer downloads on HTTPS ([#558](https://github.com/uniskela/ts6-manager/issues/558)) ([e42a88a](https://github.com/uniskela/ts6-manager/commit/e42a88a0a00f27ca936204dab2ee935898f3c79a))
+* keep sidecar API logs on one record ([#559](https://github.com/uniskela/ts6-manager/issues/559)) ([6f305b9](https://github.com/uniskela/ts6-manager/commit/6f305b96bd2d93f2c6d219cdfdcd140096e383ba))
+* show and accept SVG server icons ([#588](https://github.com/uniskela/ts6-manager/issues/588)) ([eee19ce](https://github.com/uniskela/ts6-manager/commit/eee19ceb44ddfcde4e310a6cb9b9e33b18a3037c))
+
+## [1.11.3](https://github.com/uniskela/ts6-manager/compare/v1.11.2...v1.11.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** bump transitive qs to 6.16.2 ([#553](https://github.com/uniskela/ts6-manager/issues/553)) ([5b2ac8e](https://github.com/uniskela/ts6-manager/commit/5b2ac8e32c970b9f58b0c2925f1ff72d467fce6c))
+* **deps:** update yt-dlp to 2026.10.21 ([#525](https://github.com/uniskela/ts6-manager/issues/525)) ([c483acf](https://github.com/uniskela/ts6-manager/commit/c483acf8387e5f9195a3b4c01851da2f8e3439fd))
+* reject malformed hex in AES-GCM encrypted fields ([#549](https://github.com/uniskela/ts6-manager/issues/549)) ([1d58ebf](https://github.com/uniskela/ts6-manager/commit/1d58ebfddbfafb08d4366332d213aa74f075edda))
+* require 16-byte AES-GCM authentication tags ([#547](https://github.com/uniskela/ts6-manager/issues/547)) ([7735d99](https://github.com/uniskela/ts6-manager/commit/7735d99fb86aa6656877e6f8b1d68b00d9f9e331))
+* stop sending WebSocket upgrade headers on /api ([#548](https://github.com/uniskela/ts6-manager/issues/548)) ([030de0d](https://github.com/uniskela/ts6-manager/commit/030de0d54f74ea4ee34c7c2b1d7bf6b60b7d35cd))
+
+## [1.11.2](https://github.com/uniskela/ts6-manager/compare/v1.11.1...v1.11.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** bump body-parser 1.20.9 and multer 2.5.0 ([#513](https://github.com/uniskela/ts6-manager/issues/513)) ([c9aa0dc](https://github.com/uniskela/ts6-manager/commit/c9aa0dc42f68e7125ae47f09bfa225bf777d4147))
+* **docker:** stop the Prisma update check leaving a zombie in the backend container ([#470](https://github.com/uniskela/ts6-manager/issues/470)) ([07e11a7](https://github.com/uniskela/ts6-manager/commit/07e11a7e578bc8445e6c85fd6099a6112022a796)), closes [#466](https://github.com/uniskela/ts6-manager/issues/466)
+* **media:** do not treat TRUST_PROXY as an unused outbound proxy ([6fd23b6](https://github.com/uniskela/ts6-manager/commit/6fd23b6bb1bba030e9878276acbf2d6d403b5a6c))
+* **media:** check supported downloaded-media paths through an egress proxy, not every FFmpeg input or administrator-configured radio stream ([#479](https://github.com/uniskela/ts6-manager/issues/479)) ([ce58e77](https://github.com/uniskela/ts6-manager/commit/ce58e77b0e95aa7328a5d6a67e396ab94aa15dd0))
+* **music:** keep a removed song's file while anything else still uses it ([#483](https://github.com/uniskela/ts6-manager/issues/483)) ([bb43476](https://github.com/uniskela/ts6-manager/commit/bb4347606cda2ab156c5dd37a71b115364775c9b)), closes [#478](https://github.com/uniskela/ts6-manager/issues/478)
+* **music:** keep downloads in a verified, app-owned cache keyed by source ([#481](https://github.com/uniskela/ts6-manager/issues/481)) ([2c31922](https://github.com/uniskela/ts6-manager/commit/2c3192218aac342b1b280bd7b4fcb72c90802b69))
+* **music:** prune played tracks and cap every queue add ([#469](https://github.com/uniskela/ts6-manager/issues/469)) ([dd0f7b9](https://github.com/uniskela/ts6-manager/commit/dd0f7b9a3f9062aeee9ad449fe49eca955190f49)), closes [#445](https://github.com/uniskela/ts6-manager/issues/445)
+* **music:** remove a song only through its own server's library ([#487](https://github.com/uniskela/ts6-manager/issues/487)) ([6032e6e](https://github.com/uniskela/ts6-manager/commit/6032e6e7bcf42834c9562de306c1dda38aba1e46)), closes [#484](https://github.com/uniskela/ts6-manager/issues/484)
+* **remote:** cancel slow pasted-link requests and free their slots ([#473](https://github.com/uniskela/ts6-manager/issues/473)) ([1ad36b6](https://github.com/uniskela/ts6-manager/commit/1ad36b6c393eab08bc99041ebd47243585106525))
+* **remote:** drop media requests that finish resolving after Stop or a queue clear ([#474](https://github.com/uniskela/ts6-manager/issues/474)) ([161b80b](https://github.com/uniskela/ts6-manager/commit/161b80b9733bdb8c5b6f56bcf8dae1c1c0136a07))
+* **remote:** harden listener remote rate limits and key them by listener identity ([#471](https://github.com/uniskela/ts6-manager/issues/471)) ([46aae6b](https://github.com/uniskela/ts6-manager/commit/46aae6b5c6c02ee6139142d17253012d7122f0e8))
+* **remote:** record listener remote refusals as bounded audit totals and answer a full queue with 409 instead of 429 ([#480](https://github.com/uniskela/ts6-manager/issues/480)) ([c819615](https://github.com/uniskela/ts6-manager/commit/c8196158403d0b7d4d3ecc96ec395631912bf4b6))
+* **sidecar:** end the RTP readers without a data race on shutdown ([#459](https://github.com/uniskela/ts6-manager/issues/459)) ([2f383d3](https://github.com/uniskela/ts6-manager/commit/2f383d3f6e6075acf337d13413203d247d331e14))
+* **sidecar:** offer viewers send-only media so TeamSpeak 6.0.0-beta5 answers ([#491](https://github.com/uniskela/ts6-manager/issues/491)) ([cb43e5b](https://github.com/uniskela/ts6-manager/commit/cb43e5b5d86ad94784692f90cf8fac1dc0381136)), closes [#490](https://github.com/uniskela/ts6-manager/issues/490)
+
 ## [1.11.1](https://github.com/uniskela/ts6-manager/compare/v1.11.0...v1.11.1) (2026-10-15)
 
 
@@ -388,6 +476,10 @@ Read [Upgrading](https://github.com/uniskela/ts6-manager/blob/v1.11.0/docs/publi
 * refine yt-cookie rate limiting ([a885112](https://github.com/uniskela/ts6-manager/commit/a88511263b9ea4741770ac181ae5a888490b19a6))
 
 ## [Unreleased]
+
+### Fixed
+
+- Music bot volume from `!vol`, the console slider, Discord volume controls, and Bot Flow voice-volume actions is saved and restored after a bot or backend restart (no longer returns to 100% when only the in-memory level had changed)
 
 ### Changed
 

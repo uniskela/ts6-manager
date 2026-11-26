@@ -19,6 +19,9 @@ export interface YouTubeSearchResult {
   artist: string;
   duration: number;
   thumbnail: string;
+  /** Present when flat-search JSON includes live flags (listener remote filters on these). */
+  isLive?: boolean;
+  liveStatus?: string | null;
 }
 
 export interface ParsedYouTubeUrl {
@@ -464,6 +467,11 @@ function hasPlayableFormat(info: Record<string, unknown>): boolean {
     format?.ext !== "mhtml" && format?.protocol !== "mhtml" && format?.format_note !== "storyboard");
 }
 
+/** Dump one URL's yt-dlp metadata without downloading (listener duration probe). */
+export async function dumpYouTubeJson(mediaUrl: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return ytDlpDumpJson(mediaUrl, signal);
+}
+
 async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let lastCode: number | null = null;
   let lastStderr = "";
@@ -505,12 +513,19 @@ async function ytDlpDownloadAudio(
   mediaUrl: string,
   onProgress?: (p: ProgressUpdate) => void,
   signal?: AbortSignal,
+  limits?: DownloadYouTubeLimits,
 ): Promise<string[]> {
   const formatStrategies: string[][] = [
     ["-f", YT_AUDIO_FORMAT, "-x", "--audio-quality", "0"],
     ["-f", YT_AUDIO_FORMAT],
     ["-f", "b/best"],
   ];
+  const maxBytes = limits?.maxFilesizeBytes && limits.maxFilesizeBytes > 0
+    ? Math.min(limits.maxFilesizeBytes, MAX_CACHE_FILE_BYTES)
+    : MAX_CACHE_FILE_BYTES;
+  const matchFilter = limits?.maxDurationSec && limits.maxDurationSec > 0
+    ? [`--match-filter`, `duration <= ${limits.maxDurationSec}`]
+    : [];
 
   let lastCode: number | null = null;
   let lastStderr = "";
@@ -529,7 +544,8 @@ async function ytDlpDownloadAudio(
         "--progress-template", 'postprocess:ts6-processing',
         ...fmtArgs,
         "--no-playlist",
-        "--max-filesize", `${MAX_CACHE_FILE_BYTES}`,
+        ...matchFilter,
+        "--max-filesize", `${maxBytes}`,
         "--load-info-json", infoFile,
         "-o", path.join(stagingDir, "media.%(ext)s"),
         "--print", "after_move:filepath",
@@ -551,6 +567,12 @@ async function ytDlpDownloadAudio(
   throw new Error(formatYtDlpFailure("yt-dlp download failed", lastCode, lastStderr));
 }
 
+/** Optional download caps (listener remote uses a 15-minute / size bound). */
+export interface DownloadYouTubeLimits {
+  maxDurationSec?: number;
+  maxFilesizeBytes?: number;
+}
+
 /**
  * Download audio for a URL into the music folder's download cache, or reuse
  * the cached file for the same source. YouTube Music URLs are canonicalised to
@@ -562,6 +584,7 @@ export async function downloadYouTube(
   outputDir: string,
   onProgress?: (p: ProgressUpdate) => void,
   signal?: AbortSignal,
+  limits?: DownloadYouTubeLimits,
 ): Promise<{ filePath: string; info: YouTubeInfo }> {
   const parsed = parseYouTubeUrl(url);
   if (parsed.listId && !parsed.videoId) {
@@ -588,18 +611,27 @@ export async function downloadYouTube(
     url: mediaUrl,
   };
 
-  const filePath = await mediaCacheFor(outputDir).fetch<ProgressUpdate>(cacheKey(identity), async (stagingDir, jobSignal, report) => {
+  const cache = mediaCacheFor(outputDir);
+  const key = cacheKey(identity);
+  const maxDurationSec = limits?.maxDurationSec && limits.maxDurationSec > 0 ? limits.maxDurationSec : undefined;
+  const filePath = await cache.fetch<ProgressUpdate>(key, async (stagingDir, jobSignal, report) => {
     const infoFile = path.join(stagingDir, "info.json");
     // Private: it can hold signed media links and, with cookies configured, cookie values.
     await fs.promises.writeFile(infoFile, JSON.stringify(parsedInfo), { flag: "wx", mode: 0o600 });
-    const reportedPaths = await ytDlpDownloadAudio(infoFile, stagingDir, mediaUrl, report, jobSignal);
+    const reportedPaths = await ytDlpDownloadAudio(infoFile, stagingDir, mediaUrl, report, jobSignal, limits);
     return {
       reportedPaths,
       expectedDurationSec: duration > 0 ? duration : null,
       kind: identity.kind,
       extractor: String(parsedInfo.extractor_key),
     };
-  }, { signal, onProgress });
+  }, { signal, onProgress, maxDurationSec });
+
+  // Listener caps use the cache probe's measured length (no second ffprobe).
+  if (maxDurationSec != null) {
+    const measured = await cache.measuredDuration(key);
+    if (measured != null) info.duration = measured;
+  }
 
   return { filePath, info };
 }
@@ -982,6 +1014,7 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
   try {
     const entry = JSON.parse(line);
     if (!entry || typeof entry.id !== "string" || !entry.id) return null;
+    const liveStatus = typeof entry.live_status === "string" ? entry.live_status : null;
     return {
       id: entry.id,
       title: entry.title || "Unknown",
@@ -993,6 +1026,8 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
         "Unknown",
       duration: entry.duration || 0,
       thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+      isLive: entry.is_live === true || liveStatus === "is_live",
+      liveStatus,
     };
   } catch {
     return null;

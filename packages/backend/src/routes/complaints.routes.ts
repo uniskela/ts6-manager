@@ -10,7 +10,7 @@ const getClient = (req: Request) => {
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
-complaintRoutes.get('/', async (req: Request, res: Response, next) => {
+complaintRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const params = req.query.tcldbid ? { tcldbid: req.query.tcldbid } : undefined;
     res.json(await getClient(req).execute(getSid(req), 'complainlist', params));

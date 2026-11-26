@@ -1,5 +1,5 @@
 // Test-only origin serving real production artifacts. Never ships in dist.
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const { WebSocketServer } = createRequire(new URL('../../backend/package.json', import.meta.url))('ws');
@@ -8,10 +8,15 @@ let generation = 0;
 let unavailable = false;
 let accessExpired = false;
 let accessLogins = 0;
-const APP_ORIGIN = 'http://127.0.0.1:4175';
+const APP_ORIGIN = process.env.APP_ORIGIN || 'http://127.0.0.1:4175';
 let mutations = 0;
 let needsSetup = false;
 let allowTestAuth = false;
+/** Rotating refresh-family fixture for two-tab Playwright (test server only). */
+let refreshFamily = null;
+let refreshRotateCount = 0;
+let refreshReplayRevokes = 0;
+let refreshPresented = [];
 let dashboardScenario = 'no-connections';
 let dashboardRequests = 0;
 let permissionScenario = 'normal';
@@ -265,6 +270,111 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+function b64urlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+/** Mint a JWT-shaped access token the frontend expiry/subject parsers understand. */
+function mintAccessToken({ seq, ttlSeconds = 900 }) {
+  const header = b64urlJson({ alg: 'none', typ: 'JWT' });
+  const payload = b64urlJson({
+    id: 1,
+    username: testRole,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    seq,
+    role: testRole,
+  });
+  return `${header}.${payload}.test`;
+}
+
+let refreshMintSeq = 0;
+
+function mintRefreshToken() {
+  refreshMintSeq += 1;
+  return `brand-test-refresh-${refreshMintSeq}`;
+}
+
+function resetRefreshFamily() {
+  refreshFamily = null;
+  refreshRotateCount = 0;
+  refreshReplayRevokes = 0;
+  refreshPresented = [];
+}
+
+function ensureRefreshFamily() {
+  // Keep a revoked family until /__test/reset — recreating must not reuse a
+  // previously issued refresh string (logout/replay of an abandoned family
+  // would otherwise collide with the new live token).
+  if (refreshFamily) return refreshFamily;
+  refreshFamily = {
+    family: `test-family-${Date.now()}-${refreshMintSeq}`,
+    live: mintRefreshToken(),
+    seq: 1,
+    consumed: new Map(),
+    revoked: false,
+  };
+  return refreshFamily;
+}
+
+function authUserPayload() {
+  return {
+    id: 1,
+    username: testRole,
+    displayName: testRole === 'admin' ? 'Administrator' : 'Viewer',
+    role: testRole,
+  };
+}
+
+function loginTokenPair() {
+  // Each login mints a new family (mirrors server). A prior live family is
+  // abandoned — logout presenting its tokens must not revoke this new family.
+  resetRefreshFamily();
+  const family = ensureRefreshFamily();
+  return {
+    accessToken: mintAccessToken({ seq: family.seq, ttlSeconds: 900 }),
+    refreshToken: family.live,
+    user: authUserPayload(),
+  };
+}
+
+function logoutPresented(presented) {
+  if (!refreshFamily || !presented) return;
+  if (presented === refreshFamily.live || refreshFamily.consumed.has(presented)) {
+    refreshFamily.revoked = true;
+    refreshFamily.live = null;
+  }
+}
+
+function rotateRefresh(presented) {
+  refreshPresented.push(presented);
+  const family = ensureRefreshFamily();
+  if (family.revoked) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (family.consumed.has(presented)) {
+    family.revoked = true;
+    family.live = null;
+    refreshReplayRevokes++;
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (presented !== family.live) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  const nextSeq = family.seq + 1;
+  const nextRefresh = mintRefreshToken();
+  family.consumed.set(presented, nextRefresh);
+  family.live = nextRefresh;
+  family.seq = nextSeq;
+  refreshRotateCount++;
+  return {
+    status: 200,
+    body: {
+      accessToken: mintAccessToken({ seq: nextSeq, ttlSeconds: 900 }),
+      refreshToken: nextRefresh,
+    },
+  };
+}
+
 const connections = [
   { id: 1, name: 'Primary connection', host: 'voice.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
   { id: 2, name: 'Secondary connection', host: 'backup.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
@@ -304,9 +414,134 @@ const dashboards = {
     },
   },
 };
+// Optional real SQLite auth fixture for cross-tab coordination regressions.
+//
+// The upstream address comes from the environment, so it is validated before
+// use: it must be an absolute http(s) URL pointing at a LOOPBACK host. The
+// fixture only ever runs locally, and this keeps a mis-set environment
+// variable from turning the test server into a request proxy.
+function resolveFixtureUpstream() {
+  const raw = process.env.AUTH_BACKEND_URL;
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('AUTH_BACKEND_URL must be an absolute URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`AUTH_BACKEND_URL must use http or https (got ${parsed.protocol})`);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!isLoopback) {
+    throw new Error(`AUTH_BACKEND_URL must point at a loopback host (got ${host})`);
+  }
+  return parsed;
+}
+
+let fixtureUpstream = null;
+try {
+  fixtureUpstream = resolveFixtureUpstream();
+} catch (err) {
+  throw err;
+}
+
+/**
+ * Exact fixture paths that may be forwarded.
+ *
+ * A forwarded path is always one of these values, so a request can never
+ * influence the target of the proxy.
+ */
+const ALLOWED_FIXTURE_PATHS = new Set([
+  '/__test/reset',
+  '/__test/refresh-state',
+  '/__test/refresh-diagnostics',
+]);
+
+/**
+ * The real auth routes the coordination tests exercise. The list is exact:
+ * no prefix matching, so an unexpected path is never forwarded.
+ */
+const ALLOWED_AUTH_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+  '/api/auth/me',
+]);
+
+/**
+ * The HTTP method used for each forwarded path.
+ *
+ * The method is taken from this fixed map rather than from the incoming
+ * request, so a request cannot influence how the proxy calls the upstream.
+ */
+const FIXTURE_METHODS = new Map([
+  ['/__test/reset', 'POST'],
+  ['/__test/refresh-state', 'GET'],
+  ['/__test/refresh-diagnostics', 'GET'],
+  ['/api/auth/login', 'POST'],
+  ['/api/auth/refresh', 'POST'],
+  ['/api/auth/logout', 'POST'],
+  ['/api/auth/me', 'GET'],
+]);
+
+/**
+ * The complete upstream URL and method for each forwarded path.
+ *
+ * Built ONCE at start-up from the validated loopback fixture origin and the
+ * fixed allow-listed paths. Each entry is a constant, so the forwarded
+ * request cannot be influenced by anything in the incoming request.
+ */
+const FIXTURE_TARGETS = new Map(
+  [...FIXTURE_METHODS].map(([path, method]) => [
+    path,
+    { url: `${fixtureUpstream ? fixtureUpstream.origin : 'http://127.0.0.1'}${path}`, method },
+  ]),
+);
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
+  // Optional real SQLite auth fixture for cross-tab coordination regressions.
+  // Only the explicitly allowed paths are ever forwarded.
+  if (fixtureUpstream && (ALLOWED_AUTH_PATHS.has(url.pathname)
+    || ALLOWED_FIXTURE_PATHS.has(url.pathname))) {
+    // The forwarded target is built from the ALLOWED ROUTE PATHS only — the
+    // request's path is matched against a fixed allow-list, never used to
+    // compose a URL, and the query string is dropped. The origin always comes
+    // from the validated loopback fixture URL, so this cannot become a
+    // request proxy.
+    const targetPath = ALLOWED_FIXTURE_PATHS.has(url.pathname)
+      ? url.pathname
+      : ALLOWED_AUTH_PATHS.has(url.pathname)
+        ? url.pathname
+        : '/__test/refresh-state';
+    // The upstream target comes from a table of complete URLs built ONCE at
+    // start-up from the validated loopback fixture origin and the fixed
+    // allow-listed paths. Nothing read from the incoming request can reach the
+    // request at all: the path is looked up in a table, and the URL is a
+    // constant. The method is fixed per path for the same reason.
+    const target = FIXTURE_TARGETS.get(targetPath);
+    const upstream = httpRequest(target.url, {
+      method: target.method,
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+    }, (reply) => {
+      res.writeHead(reply.statusCode, reply.headers);
+      reply.pipe(res);
+    });
+    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    // Forward the request body explicitly rather than piping the raw request,
+    // so only the JSON body is relayed to the fixture.
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (body.length > 0) upstream.write(body);
+      upstream.end();
+    });
+    return;
+  }
   if (url.pathname.startsWith('/__test/')) {
     if (url.pathname === '/__test/update') generation++;
     // Stand-in for an authenticating proxy's login: renew, then send the browser back.
@@ -329,6 +564,7 @@ const server = createServer(async (req, res) => {
       mutations = 0;
       needsSetup = false;
       allowTestAuth = false;
+      resetRefreshFamily();
       dashboardScenario = 'no-connections';
       dashboardRequests = 0;
       permissionScenario = 'normal';
@@ -396,6 +632,19 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
+    }
+    if (url.pathname === '/__test/refresh-state') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        rotateCount: refreshRotateCount,
+        replayRevokes: refreshReplayRevokes,
+        presented: refreshPresented,
+        live: refreshFamily?.live ?? null,
+        seq: refreshFamily?.seq ?? null,
+        revoked: refreshFamily?.revoked ?? false,
+        consumedCount: refreshFamily?.consumed?.size ?? 0,
+      }));
+      return;
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ mutations, accessLogins, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests, logsScenario, logsRequests }));
@@ -495,16 +744,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (allowTestAuth && url.pathname === '/api/auth/refresh' && req.method === 'POST') {
+      const body = await readJson(req);
+      const result = rotateRefresh(body.refreshToken);
+      res.statusCode = result.status;
+      res.end(JSON.stringify(result.body));
+      return;
+    }
+    if (allowTestAuth && url.pathname === '/api/auth/logout' && req.method === 'POST') {
+      const body = await readJson(req);
+      logoutPresented(body.refreshToken);
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const data = url.pathname === '/api/health' ? { status: 'ok' }
       : url.pathname === '/api/setup/status' ? { needsSetup }
-      : url.pathname === '/api/auth/login' && allowTestAuth ? {
-        accessToken: 'brand-test-access-token',
-        refreshToken: 'brand-test-refresh-token',
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
-      }
+      : url.pathname === '/api/auth/login' && allowTestAuth ? loginTokenPair()
       : url.pathname === '/api/auth/login' ? { error: 'Invalid credentials' }
       : url.pathname === '/api/auth/me' && allowTestAuth ? {
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
+        user: authUserPayload(),
       }
       : url.pathname === '/api/servers/deployment-check' && allowTestAuth ? {
         managerInDocker: false,
@@ -516,6 +776,7 @@ const server = createServer(async (req, res) => {
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
       : url.pathname === '/api/settings/iptv-network' && allowTestAuth && testRole === 'admin' ? { allowedLocalHosts: [] }
+      : url.pathname === '/api/settings/radio-network' && allowTestAuth && testRole === 'admin' ? { allowedLocalHosts: [] }
       : url.pathname === '/api/iptv/filters' && allowTestAuth ? { countries: [], languages: [] }
       : ['/api/iptv/favourites', '/api/iptv/recent'].includes(url.pathname) && allowTestAuth ? []
       : url.pathname === '/api/iptv/playlists' && allowTestAuth
@@ -736,9 +997,19 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(data));
     return;
   }
+  const REMOTE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'none'; manifest-src 'none'";
+  if (url.pathname === '/remote/') {
+    res.writeHead(301, { Location: `/remote${url.search}` });
+    res.end();
+    return;
+  }
   const staticPath = /^\/(assets|icons)\//.test(url.pathname)
-    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest'].includes(url.pathname);
-  const file = staticPath ? url.pathname.slice(1) : 'index.html';
+    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest', '/remote.html'].includes(url.pathname);
+  const file = url.pathname === '/remote' || url.pathname === '/remote.html'
+    ? 'remote.html'
+    : staticPath
+      ? url.pathname.slice(1)
+      : 'index.html';
   if (file.includes('..')) { res.writeHead(400); res.end(); return; }
   try {
     let data = await readFile(new URL(file, dist));
@@ -748,6 +1019,11 @@ const server = createServer(async (req, res) => {
       html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png',
       svg: 'image/svg+xml', webmanifest: 'application/manifest+json',
     }[ext] || 'application/octet-stream');
+    if (file === 'remote.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Content-Security-Policy', REMOTE_CSP);
+    }
     res.end(data);
   } catch { res.writeHead(404); res.end('Not found'); }
 });
@@ -757,6 +1033,8 @@ server.on('error', (err) => {
   console.error('[serve-production] listen failed:', err);
   process.exit(1);
 });
-server.listen(4175, '127.0.0.1', () => {
-  console.log('[serve-production] ready on http://127.0.0.1:4175');
+const listenPort = Number(process.env.PORT || 4175);
+const listenHost = process.env.HOST || '127.0.0.1';
+server.listen(listenPort, listenHost, () => {
+  console.log(`[serve-production] ready on http://${listenHost}:${listenPort} (APP_ORIGIN=${APP_ORIGIN})`);
 });

@@ -10,7 +10,7 @@ on:
     inputs:
       image_tag:
         description: Official TeamSpeak server image tag
-        default: 6.0.0-beta13
+        default: 6.0.0-beta14
         required: true
         type: string
   schedule:
@@ -34,5 +34,5 @@ jobs:
       - run: pnpm --filter @ts6/common build
       - name: Exercise authenticated WebQuery against official TeamSpeak
         env:
-          TS6_IMAGE_TAG: ${{ inputs.image_tag || '6.0.0-beta13' }}
+          TS6_IMAGE_TAG: ${{ inputs.image_tag || '6.0.0-beta14' }}
         run: pnpm --filter @ts6/backend exec tsx scripts/ts6-compat.ts
