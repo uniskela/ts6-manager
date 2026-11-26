@@ -1,4 +1,4 @@
-"""Check image-publication boundaries without building or publishing images."""
+"""Check release and validation workflow boundaries without publishing images."""
 
 import os
 from pathlib import Path
@@ -69,6 +69,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertRegex(action, r"^[\w-]+/[\w-]+@[0-9a-f]{40}$")
         self.assertIn("pull_request", self.validation["on"])
         self.assertNotIn("pull_request_target", self.validation["on"])
+
+    def test_pr_validation_installs_dependencies_without_lifecycle_scripts(self):
+        for job in ("typescript", "media-cache"):
+            with self.subTest(job=job):
+                steps = self.validation["jobs"][job]["steps"]
+                setup = next(step for step in steps if step.get("name") == "Set up pnpm")
+                install = next(step for step in steps if step.get("name") == "Install dependencies")
+                self.assertEqual(setup["with"]["run_install"], "false")
+                self.assertEqual(
+                    install["run"], "pnpm install --frozen-lockfile --ignore-scripts"
+                )
 
     def test_reusable_caller_ceiling_allows_required_permissions(self):
         caller = self.release["jobs"]["publish-images"]
