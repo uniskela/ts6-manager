@@ -163,9 +163,9 @@ From 1.11.0, each GitHub Release includes a Windows sidecar archive built from t
 
 #### Breaking change for source builds
 
-The minimum Go toolchain version for sidecar source builds has increased from Go 1.25 to Go 1.26.9. Native Windows source builds require Go 1.26.9 or newer; upgrade your Go toolchain before following the build steps below.
+Sidecar source builds require Go 1.26.11 or newer, including native Windows builds. Upgrade your Go toolchain before following the build steps below.
 
-The rest of this section builds from source, which is what the PR-test setup below uses. Build from the same checkout/release as the backend, using Go 1.26.9 or newer. From the repository root:
+The rest of this section builds from source, which is what the PR-test setup below uses. Build from the same checkout/release as the backend, using Go 1.26.11 or newer. From the repository root:
 
 ```powershell
 New-Item -ItemType Directory -Force .\bin | Out-Null
