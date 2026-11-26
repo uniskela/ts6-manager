@@ -60,6 +60,17 @@ Issue reports and operator follow-up on `uniskela/ts6-manager` that shaped shipp
 
 Shipped with **v1.8.5** (#184 / #185), **v1.9.0** (#150 / #192) and **v1.9.2** (#202 / #215).
 
+### Shipped scout findings
+
+Fixes from the 2026 ecosystem scout (index [issue #508](https://github.com/uniskela/ts6-manager/issues/508)) that are already in this tree. The author is the person who originated the finding.
+
+| Finding | Original author | What shipped |
+|---------|-----------------|--------------|
+| [F44](https://github.com/uniskela/ts6-manager/issues/693) — Raise the sidecar Go floor past GO-2026-6859 (net/http). Source: [pol4rfuchs/ts6-manager@854bf21](https://github.com/pol4rfuchs/ts6-manager/commit/854bf21) | [@pol4rfuchs](https://github.com/pol4rfuchs) | Sidecar modules and release images build with Go 1.26.11 or newer ([PR #712](https://github.com/uniskela/ts6-manager/pull/712)) |
+| [F45](https://github.com/uniskela/ts6-manager/issues/689) — Viewers can read admin-only server data. Source: [3oD/ts6-manager@0b4cb6e](https://github.com/3oD/ts6-manager/commit/0b4cb6e) | [@3oD](https://github.com/3oD) | Viewer accounts are limited to servers and reads they are allowed to see ([PR #711](https://github.com/uniskela/ts6-manager/pull/711)) |
+
+Shipped in **v1.12.0**.
+
 ### Community forks
 
 | Fork | Author | Commits / area | Adopted in uniskela |
