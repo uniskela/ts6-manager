@@ -30,10 +30,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # pnpm/action-setup must not also pass `version`: it rejects a workflow
+      # version when package.json declares `packageManager`. The pin lives in
+      # package.json (pnpm@9.15.9), matching main.
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 9
           run_install: false
 
       - name: Set up Node.js
@@ -45,8 +47,12 @@ jobs:
 
       # Own lockfile; excluded from the workspace via pnpm-workspace.yaml.
       # Native Opus/DAVE addons compile here (ubuntu-latest provides a C toolchain).
+      # --ignore-scripts keeps lifecycle scripts off by default, then
+      # --config.ignore-scripts=false re-enables them for this install: the native
+      # addons (@discordjs/opus, @snazzah/davey) publish their binaries through an
+      # install hook. Without them the native module is absent and the smoke test fails.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-workspace
+        run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts --config.ignore-scripts=false
 
       # pretypecheck / pretest already run scripts/sync-tslib.mjs (backend tslib → .vendor).
       - name: Typecheck
