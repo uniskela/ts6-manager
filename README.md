@@ -1,22 +1,19 @@
-#### DISCLAIMER: 
-![AI Assisted](https://img.shields.io/badge/AI%20Assisted-Project-00ADD8?style=for-the-badge&logo=dependabot&logoColor=white)
-
 # TS6 Manager
 
-> [!IMPORTANT]
-> **This is an opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager), not a mirror or drop-in republish of upstream.**
-> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`, optionally mirrored on Docker Hub as `uniskela/ts6-manager:<component>` when Hub publish secrets are configured).
-> Community issue/PR credits: [`CREDITS.md`](CREDITS.md) (including [fork contributions](CREDITS.md#fork-contributions)).
+![License](https://img.shields.io/badge/license-MIT-blue)
+![AI Assisted](https://img.shields.io/badge/AI%20Assisted-Project-00ADD8?style=for-the-badge&logo=dependabot&logoColor=white)
 
-Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets - all from your browser.
+An open-source, web-based management interface for TeamSpeak servers. Manage virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets — all from your browser.
 
-**Built for the community.** TS6 Manager is an independent FOSS project maintained by contributors passionate about TeamSpeak and self-hosting. Development is driven by the needs of users and contributors rather than a commercial product or hosting service.
+**Built for the community.** TS6 Manager is an independently maintained continuation of the original [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager) project, focused on security, reliability, usability, and ongoing feature development. Development is driven by the needs of users and contributors rather than a commercial product or hosting service.
+
+**Contributions are welcome!** Whether you develop software, administer TeamSpeak servers, test releases, improve documentation, or have ideas for the project, there's a place for you here. See [Contributing](#contributing) to get involved.
+
+Development uses AI-assisted tooling alongside human oversight, testing, and code review. Thank you to the original project creator and everyone who has contributed to its continued development. See [CREDITS.md](CREDITS.md) and our [contributors](#contributors) for acknowledgements.
 
 Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSpeak builds). Telnet is not used or supported.
 
-![License](https://img.shields.io/badge/license-MIT-blue)
-
-**Contents:** [Documentation](#documentation) · [AI agent docs](#using-this-project-with-ai-coding-agents) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility) · [Download progress](#download-progress) · [License](#license)
+**Contents:** [Documentation](#documentation) · [AI agent docs](#using-this-project-with-ai-coding-agents) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Contributing](#contributing) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility) · [Download progress](#download-progress) · [Contributors](#contributors) · [License](#license)
 
 ## Documentation
 
@@ -224,6 +221,9 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 ## Quick Start (Docker)
 
+> [!NOTE]
+> TS6 Manager maintains its own releases and container images, separate from the original project. Do not assume deployments are interchangeable; review the [upgrading documentation](https://ts6manager.com/docs/latest/upgrading/) and back up your data before switching.
+
 Prebuilt images are published only for immutable `vX.Y.Z` releases created by Release Please. Ordinary pushes and PR merges to `main` do **not** publish images. [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) is invoked after a release is created and also has a manual recovery path for republishing an existing release tag.
 
 **GitHub Container Registry (default)** — used by the compose files in this repo:
@@ -317,8 +317,6 @@ Then open `http://localhost:3000/setup`, create the first admin, and log in. The
 
 **Manager only (no TeamSpeak):** use `docker compose -f docker-compose.local.yml up -d --build` after writing `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` into `.env`.
 
-> This repository is an opinionated continuation of the original [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager) project.
-
 ### Coolify / Reverse Proxy
 
 Use [`docker-compose.coolify.yml`](docker-compose.coolify.yml) as a starting point. Key differences from the standard compose:
@@ -339,6 +337,21 @@ networks:
     external: true
     name: your-ts-server-network-id
 ```
+
+## Contributing
+
+TS6 Manager welcomes contributions from the TeamSpeak and self-hosting communities. You don't need to be a developer or know the entire codebase to help.
+
+- **Report bugs or compatibility issues:** [Open an issue](https://github.com/uniskela/ts6-manager/issues/new/choose) with the affected version, relevant environment details, and steps to reproduce. Remove credentials and other sensitive information from logs.
+- **Suggest improvements:** [Share an idea or join an existing issue](https://github.com/uniskela/ts6-manager/issues). Feedback and alternative approaches are welcome, even if they differ from the current implementation.
+- **Improve documentation or help test:** Clarify setup instructions, report confusing workflows, or test changes in a non-production environment.
+- **Contribute code:** Browse [open issues](https://github.com/uniskela/ts6-manager/issues), fork the repository, follow the [development setup](#development), and submit a pull request with a clear description and relevant tests. For substantial changes, open an issue first so we can discuss scope and design before you invest significant time.
+
+Small contributions are just as valuable as larger ones. Pull requests are reviewed for maintainability, security, reliability, and compatibility with the project's goals. AI-assisted contributions are welcome, but contributors should understand and verify the changes they submit.
+
+For security vulnerabilities, please follow the private reporting process in [SECURITY.md](SECURITY.md) rather than opening a public issue.
+
+All forms of contribution are appreciated; see [Contributors](#contributors) and [CREDITS.md](CREDITS.md) for community acknowledgements.
 
 ## Development
 
