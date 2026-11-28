@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   AudioPlayerStatus,
   EndBehaviorType,
+  NetworkingStatusCode,
   NoSubscriberBehavior,
   StreamType,
   VoiceConnectionStatus,
@@ -24,6 +25,7 @@ import type { BotId } from "../core/ids.js";
 import { HumanFilter, type DiscordUserInfo, type HumanFilterOptions } from "../core/human-filter.js";
 import { processIdentityRequests, type IdentityRequests } from "../core/identity-requests.js";
 import { JoinCancelled } from "../core/join-errors.js";
+import { isOutboundSilence, outboundCounters, trackOutboundConnection, type OutboundTelemetry } from "../core/outbound-telemetry.js";
 import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
@@ -179,6 +181,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
   framesSent = 0;
   playbackHealthRejected = 0;
   playbackDaveRejected = 0;
+  private readonly outbound = outboundCounters();
+  private outboundConnection: ReturnType<typeof trackOutboundConnection> | null = null;
+  private feedConsumed = 0;
+  private drainingConsumed: Readonly<FrameFeed["consumed"]> | null = null;
   private feedDropped = 0;
   private feedStarved = 0;
   rejoins = 0;
@@ -433,18 +439,27 @@ export class DiscordBot extends EventEmitter implements BotPort {
       created = fresh;
       this.connection = fresh;
       this.installDaveGuards(fresh);
+      const outbound = this.installOutboundTelemetry(fresh);
+      this.outboundConnection = outbound;
       this.watchDave(fresh);
       fresh.subscribe(this.player);
       fresh.on("stateChange", (o, n) => {
         // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
         if (fresh !== this.connection) return;
+        if ("networking" in o &&
+            (!("networking" in n) || o.networking !== n.networking || n.networking.state.code === NetworkingStatusCode.Closed)) {
+          outbound.invalidate();
+        }
         this.watchDave(fresh);
         if (o.status !== n.status) this.logDaveLifecycle(fresh, `voice-${n.status}`);
         if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
         // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
         else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
       });
-      fresh.on("error", (e) => this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`));
+      fresh.on("error", (e) => {
+        this.outbound.connectionErrors += 1;
+        this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`);
+      });
       return fresh;
     } catch (e) {
       this.noteFailure();
@@ -454,6 +469,30 @@ export class DiscordBot extends EventEmitter implements BotPort {
       }
       throw e;
     }
+  }
+
+  private installOutboundTelemetry(conn: VoiceConnection) {
+    const outbound = trackOutboundConnection(this.outbound, () => this.outboundNow());
+    const prepare = conn.prepareAudioPacket.bind(conn);
+    const dispatch = conn.dispatchAudio.bind(conn);
+    conn.prepareAudioPacket = (frame) => {
+      const revision = outbound.revision;
+      const packet = prepare(frame);
+      outbound.prepare(isOutboundSilence(frame), packet !== undefined, revision);
+      return packet;
+    };
+    conn.dispatchAudio = () => outbound.dispatch(dispatch);
+    return outbound;
+  }
+
+  private outboundNow(): number {
+    try {
+      const now = (this.timing.now ?? Date.now)();
+      if (Number.isFinite(now)) return now;
+    } catch {
+      // A diagnostic clock failure must not interfere with playback or status.
+    }
+    return Date.now();
   }
 
   private currentDave(conn: VoiceConnection): object | null {
@@ -801,6 +840,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private detachFeed(finish: boolean): void {
     const feed = this.feed;
     if (!feed) return;
+    this.feedConsumed += this.drainingConsumed?.frames ?? 0;
+    this.drainingConsumed = finish ? feed.consumed : null;
+    if (!finish) this.feedConsumed += feed.consumed.frames;
     this.feedDropped += feed.dropped;
     this.feedStarved += feed.starved;
     this.feed = null;
@@ -913,6 +955,15 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.supervisor?.decryptErrors ?? 0;
   }
 
+  get outboundTelemetry(): OutboundTelemetry {
+    const { lastAudioSentAt, ...counts } = this.outbound;
+    return Object.freeze({
+      ...counts,
+      consumed: this.feedConsumed + (this.drainingConsumed?.frames ?? 0) + (this.feed?.consumed.frames ?? 0),
+      lastAudioSentAgeMs: lastAudioSentAt === null ? null : Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, this.outboundNow() - lastAudioSentAt)),
+    });
+  }
+
   get playbackDropped(): number {
     return this.feedDropped + (this.feed?.dropped ?? 0);
   }
@@ -968,6 +1019,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.lastDaveLifecycleKey = null;
     const conn = this.connection;
     this.connection = null;
+    this.outboundConnection?.invalidate();
+    this.outboundConnection = null;
     this.daveOk = false;
     this.daveTrace = null;
     this.connectedAt = null;

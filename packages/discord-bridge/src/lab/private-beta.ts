@@ -136,6 +136,7 @@ async function main(): Promise<void> {
       senders: byBot((b) => ({
         daveReady: b.daveInfo?.ready === true && (b.daveInfo.protocolVersion ?? 0) >= 1,
         framesSent: b.framesSent,
+        outbound: b.outboundTelemetry,
         playerStatus: b.playerStatus,
         playbackDropped: b.playbackDropped,
         playbackStarved: b.playbackStarved,

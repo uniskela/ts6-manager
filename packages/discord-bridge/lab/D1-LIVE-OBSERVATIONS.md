@@ -41,7 +41,8 @@ Aligned with the restricted snapshot table in Draft PR #564's investigation repo
 | TS UDP before decrypt | `tsWhisperDropped` (non-channel voice after decrypt emit) | Packet-type totals, encrypted vs unencrypted, auth success/fail, receive generation, rollover success, time since last valid channel voice. Those need tslib `client.ts` instrumentation owned by #564. |
 | Directory/router | `t2dReceived`, `t2dForwarded`, `t2dMalformed`, `t2dUnknownSpeakers`, `t2dOwnVoice`, `t2dExcluded`, `t2dNotInChannel`, plus unsupported/invalid/decode/voice-stop | None of those drop reasons include identities. |
 | Each required slot | `senders[id]`: `inChannel`, `healthy`, `daveReady`, `playerStatus`, occupancy integers `voiceMembers`/`voiceBots`, health `parked` vs `fail-closed` | Connection status string, subscription presence/identity match, unknown-vs-human member split. |
-| Sender/feed | `framesSent` (feed offers), `playbackDropped`, `playbackStarved`, `playbackHealthRejected`, `playbackDaveRejected` | Queued depth, prepare/dispatch success, last-success age. `forwarded` still counts sink calls even when sendOpus rejects. |
+| Sender/feed | `framesSent` (feed offers), `playbackDropped`, `playbackStarved`, `playbackHealthRejected`, `playbackDaveRejected` | Queued depth. `forwarded` still counts sink calls even when sendOpus rejects. |
+| Outbound Discord packets | Per-slot `outbound` counts consumed frames, prepared/refused audio and silence, successful local dispatches, fenced and unconfirmed dispatches, abandoned packets, pending packets, connection errors and last-audio age. | UDP completion, Discord receipt, decryption and audible playback. |
 | Lifecycle | existing recoveries / scheduledReconnects / event ring | Fixed reason-category enum for join/leave/undeafen/destroy. |
 
 Incoming TeamSpeak **packet generation and authentication failures are not exposed here** so this branch does not edit `packages/backend/src/voice/tslib/client.ts` (PR #564).

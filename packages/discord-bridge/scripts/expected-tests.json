@@ -146,6 +146,20 @@
     "tears a late connection down when leave() arrives while it waits for Ready",
     "treats a rejoin() that returns false as a failure and builds a new connection"
   ],
+  "src/adapters/discord-bot.outbound-telemetry.test.ts": [
+    "adds no per-packet log lines across 500 guarded sends",
+    "attributes a packet fenced by an epoch change once without sending it",
+    "consumes real feed frames without preparing when no connection is playable",
+    "counts exactly three abandonments for three real prepare-then-leave cycles",
+    "counts guarded refusals without emitting plaintext before DAVE is ready or at protocol zero",
+    "distinguishes same-transport resume from replacement and permanent invalidation",
+    "keeps a fixed frozen numeric snapshot after 10000 packets",
+    "measures offers, real player reads, guarded audio and actual player silence padding",
+    "preserves inner arguments, return values and exceptions with one call per operation",
+    "preserves totals across rejoin, recovery and teardown after a successful dispatch",
+    "settles a replaced preparation and a preparation invalidated by a refused prepare",
+    "uses the injected clock for audio age and keeps two bot slots isolated"
+  ],
   "src/adapters/discord-bot.playback.test.ts": [
     "drops a DAVE-lost turn and plays a fresh turn when DAVE returns",
     "keeps Discord to TeamSpeak working while another sender connection is recreated",
@@ -426,6 +440,9 @@
     "one session keeps one epoch; a new Networking, wrapper, native session or reinit is a new one",
     "processWelcome after the session is identified is the same epoch (live welcome:ok#0 is not a replacement)"
   ],
+  "src/core/frame-feed.telemetry.test.ts": [
+    "counts drained reads after finish and excludes oldest-drop and destroyed-stream cleanup reads"
+  ],
   "src/core/human-filter.test.ts": [
     "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
     "30 sequential filter replacements on one never-settling request: one request, no subscriber growth, and the old filters are reclaimable",
@@ -467,6 +484,10 @@
     "the start function is not kept by an unsettled request",
     "uncancelled subscribers each receive exactly one answer, and the request is counted until it settles"
   ],
+  "src/core/outbound-telemetry.test.ts": [
+    "classifies only the exact library silence frame",
+    "conserves prepared packets across replacement, refusal and reentrant invalidation"
+  ],
   "src/core/rebuild-budget.test.ts": [
     "a budget of zero refuses everything",
     "allows `max` attempts per window and then says when the next one is allowed",
@@ -506,6 +527,7 @@
     "leaves stale staging files and unexpected symlinks untouched",
     "parks bots-only startup without a receiver through publisher files and the healthcheck script",
     "records bounded lifecycle events and never copies a secret-shaped field",
+    "reports outbound counters only in detailed status and includes them in the lab snapshot",
     "required disconnected or DAVE-unready senders keep health off ok without restarting Docker",
     "writes status atomically"
   ],

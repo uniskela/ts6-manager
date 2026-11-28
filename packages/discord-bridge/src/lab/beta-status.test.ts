@@ -459,6 +459,48 @@ describe("private-beta status", () => {
     }
   });
 
+  it("reports outbound counters only in detailed status and includes them in the lab snapshot", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "d1-beta-outbound-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const outbound = {
+      consumed: 2,
+      preparedAudio: 2,
+      preparedSilence: 0,
+      prepareRefusedAudio: 0,
+      prepareRefusedSilence: 0,
+      sentAudio: 1,
+      sentSilence: 0,
+      dispatchFenced: 0,
+      dispatchUnconfirmed: 0,
+      abandoned: 0,
+      pending: 1,
+      lastAudioSentAgeMs: 90,
+      connectionErrors: 0,
+    };
+    const status = buildBetaStatus({
+      sourceCommit: "abc123",
+      snap: { ...running, senders: { "slot-0": { framesSent: 2, outbound } } },
+      events: [],
+      started: true,
+      singleAttempt: false,
+    });
+    writeBetaStatusFiles(dir, status);
+    const detailPath = join(dir, "private-beta-status.json");
+    const detail = JSON.parse(readFileSync(detailPath, "utf8"));
+    assert.equal(statSync(detailPath).mode & 0o777, 0o600);
+    assert.deepEqual(detail.senders["slot-0"].outbound, outbound);
+    assert.ok(Object.values(detail.senders["slot-0"].outbound).every((x) => x === null || Number.isFinite(x)));
+    const host = JSON.parse(readFileSync(join(dir, "host-status.json"), "utf8"));
+    assert.deepEqual(Object.keys(host), ["mode", "experimental", "sourceCommit", "at", "state", "health", "daveReady"]);
+
+    // Both entrypoints start live sessions when imported, so check their snapshot wiring without loading them.
+    const beta = readFileSync(join(pkgRoot, "src/lab/private-beta.ts"), "utf8");
+    const live = readFileSync(join(pkgRoot, "src/lab/live.ts"), "utf8");
+    assert.match(beta, /senders: byBot[\s\S]*?outbound: b\.outboundTelemetry/);
+    assert.match(live, /outbound: Object\.fromEntries\(.*b\.outboundTelemetry/);
+    assert.match(live, /ev\.data\.finalStatus = snapshot\(\)/);
+  });
+
   it("healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped", () => {
     const ok = buildBetaStatus({ sourceCommit: "x", snap: running, events: [], started: true, singleAttempt: true });
     const now = Date.parse(String(ok.at));

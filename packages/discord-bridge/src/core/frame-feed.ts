@@ -12,6 +12,8 @@ export class FrameFeed extends Readable {
   private wanted = false;
   private finishing = false;
   private lastOfferAt = 0;
+  /** Kept separately so a bot can count a finished feed's drain without retaining its buffers. */
+  readonly consumed = { frames: 0 };
   dropped = 0;
   /** Consumer asked for a frame more than 40 ms after the last offer, with nothing queued. */
   starved = 0;
@@ -27,10 +29,17 @@ export class FrameFeed extends Readable {
     this.drain();
     while (this.queued > this.maxQueued) {
       // Oldest first: that is the stream's buffered frame when it holds one, else the queue's head.
-      if (this.readableLength > 0) this.read();
+      if (this.readableLength > 0) super.read();
       else this.queue.shift();
       this.dropped += 1;
     }
+  }
+
+  override read(size?: number): Buffer | null {
+    const live = !this.destroyed;
+    const frame = super.read(size) as Buffer | null;
+    if (live && frame !== null) this.consumed.frames += 1;
+    return frame;
   }
 
   /** End the stream once the queued frames are consumed. */

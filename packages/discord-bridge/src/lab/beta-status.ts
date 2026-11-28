@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { OutboundTelemetry } from "../core/outbound-telemetry.js";
 
 export const PRIVATE_BETA_MODE = "private-beta" as const;
 export const STATUS_FILE = "evidence/private-beta-status.json";
@@ -65,6 +66,7 @@ export interface BetaSnapshotIn {
     {
       daveReady?: boolean;
       framesSent?: number;
+      outbound?: OutboundTelemetry;
       playerStatus?: string;
       playbackDropped?: number;
       playbackStarved?: number;
