@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.12.1](https://github.com/uniskela/ts6-manager/compare/v1.12.0...v1.12.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **security:** remediate SonarCloud security findings ([#714](https://github.com/uniskela/ts6-manager/issues/714)) ([d0c7896](https://github.com/uniskela/ts6-manager/commit/d0c789609415b46da53bd182b3b2ac6da97701ce))
+
 ## [1.12.0](https://github.com/uniskela/ts6-manager/compare/v1.11.4...v1.12.0) (2026-11-26)
 
 
