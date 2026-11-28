@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const PRIVATE_BETA_MODE = "private-beta" as const;
@@ -293,14 +294,27 @@ export function hostStatusView(status: Record<string, unknown>): Record<string, 
 
 export function writeAtomicJson(path: string, value: unknown, mode = 0o600): void {
   const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
-  // 0755 so the host can reach host-status.json; detailed files stay 0600.
-  chmodSync(dir, 0o755);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  chmodSync(tmp, mode);
-  renameSync(tmp, path);
-  chmodSync(path, mode);
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (!lstatSync(dir).isDirectory()) throw new Error("status parent must be a directory");
+  const existing = lstatSync(path, { throwIfNoEntry: false });
+  if (existing && !existing.isFile()) throw new Error("status target must be a regular file");
+
+  const json = `${JSON.stringify(value, null, 2)}\n`;
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    try {
+      // Apply the final mode on the new inode before writing, even under a restrictive umask.
+      fchmodSync(fd, mode);
+      writeFileSync(fd, json);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
 }
 
 export function writeBetaStatusFiles(dir: string, status: Record<string, unknown>): void {

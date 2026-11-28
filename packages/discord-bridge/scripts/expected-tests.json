@@ -497,10 +497,13 @@
   ],
   "src/lab/beta-status.test.ts": [
     "Docker healthcheck stays live for degraded and unavailable so a refused sender cannot restart-loop",
+    "creates private status before writing and atomically replaces it across umasks",
     "derives fail-closed when DAVE is down or a duplicate receiver appears",
     "does not park pre-election when connected bot observations disagree or none are connected",
     "exposes TeamSpeak→Discord counters and per-slot sender readiness without identities",
     "healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped",
+    "keeps the previous status and removes staging after write or publication failure",
+    "leaves stale staging files and unexpected symlinks untouched",
     "parks bots-only startup without a receiver through publisher files and the healthcheck script",
     "records bounded lifecycle events and never copies a secret-shaped field",
     "required disconnected or DAVE-unready senders keep health off ok without restarting Docker",

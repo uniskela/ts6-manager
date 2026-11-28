@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import fs, { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -345,13 +346,117 @@ describe("private-beta status", () => {
     assert.equal(JSON.parse(readFileSync(detailed, "utf8")).mode, "private-beta");
     assert.equal((statSync(detailed).mode & 0o777).toString(8), "600");
     assert.equal((statSync(host).mode & 0o777).toString(8), "644");
-    assert.equal((statSync(dir).mode & 0o777).toString(8), "755");
+    assert.equal((statSync(dir).mode & 0o777).toString(8), "700");
     const view = hostStatusView(status);
     assert.deepEqual(JSON.parse(readFileSync(host, "utf8")), view);
     assert.equal("events" in view, false);
     assert.equal("counters" in view, false);
     writeAtomicJson(join(dir, "other.json"), { mode: "private-beta" });
     assert.equal((statSync(join(dir, "other.json")).mode & 0o777).toString(8), "600");
+  });
+
+  it("creates private status before writing and atomically replaces it across umasks", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "d1-beta-mode-"));
+    const path = join(dir, "detail.json");
+    const write = fs.writeFileSync;
+    const rename = fs.renameSync;
+    const open = fs.openSync;
+    let old = 0;
+    let writes = 0;
+    const originalUmask = process.umask();
+    t.mock.method(fs, "openSync", (...args: Parameters<typeof fs.openSync>) => {
+      const fd = open(...args);
+      assert.equal(fs.fstatSync(fd).mode & 0o077, 0);
+      assert.equal(fs.fstatSync(fd).size, 0);
+      return fd;
+    });
+    t.mock.method(fs, "writeFileSync", (...args: Parameters<typeof fs.writeFileSync>) => {
+      assert.equal(typeof args[0], "number");
+      const fd = args[0] as number;
+      assert.equal(fs.fstatSync(fd).mode & 0o777, 0o600);
+      assert.equal(fs.fstatSync(fd).size, 0);
+      write(...args);
+      assert.equal(fs.fstatSync(fd).mode & 0o777, 0o600);
+      writes++;
+    });
+    t.mock.method(fs, "renameSync", (from: string, to: string) => {
+      assert.equal(to, path);
+      assert.equal(statSync(from).mode & 0o777, 0o600);
+      if (old) assert.equal(JSON.parse(readFileSync(path, "utf8")).sequence, old);
+      rename(from, to);
+    });
+    syncBuiltinESMExports();
+    try {
+      for (const mask of [0o022, 0o077, 0o777]) {
+        process.umask(mask);
+        writeAtomicJson(path, { sequence: old + 1 });
+        old++;
+        assert.equal(JSON.parse(readFileSync(path, "utf8")).sequence, old);
+        assert.equal(statSync(path).mode & 0o777, 0o600);
+        assert.deepEqual(fs.readdirSync(dir), ["detail.json"]);
+      }
+      assert.equal(writes, 3);
+    } finally {
+      process.umask(originalUmask);
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves stale staging files and unexpected symlinks untouched", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "d1-beta-stage-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const path = join(dir, "detail.json");
+    const target = join(dir, "unrelated");
+    fs.writeFileSync(target, "canary");
+    fs.writeFileSync(path + ".tmp", "old staging content");
+    writeAtomicJson(path, { sequence: 1 });
+    assert.equal(readFileSync(path + ".tmp", "utf8"), "old staging content");
+    fs.unlinkSync(path + ".tmp");
+    fs.symlinkSync(target, path + ".tmp");
+    writeAtomicJson(path, { sequence: 2 });
+    assert.equal(fs.lstatSync(path + ".tmp").isSymbolicLink(), true);
+    assert.equal(readFileSync(target, "utf8"), "canary");
+    fs.unlinkSync(path);
+    fs.symlinkSync(target, path);
+    assert.throws(() => writeAtomicJson(path, { sequence: 3 }), /regular file/);
+    assert.equal(fs.lstatSync(path).isSymbolicLink(), true);
+    assert.equal(readFileSync(target, "utf8"), "canary");
+    const linkedDir = join(dir, "linked");
+    fs.symlinkSync(dir, linkedDir);
+    assert.throws(() => writeAtomicJson(join(linkedDir, "different.json"), {}), /status parent/);
+    assert.equal(fs.existsSync(join(dir, "different.json")), false);
+  });
+
+  it("keeps the previous status and removes staging after write or publication failure", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "d1-beta-failure-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const path = join(dir, "detail.json");
+    const write = fs.writeFileSync;
+    writeAtomicJson(path, { sequence: 1 });
+    const previous = readFileSync(path, "utf8");
+    const failure = new Error("synthetic status failure");
+    for (const operation of ["write", "rename"]) {
+      if (operation === "write") {
+        t.mock.method(fs, "writeFileSync", (fd: number) => {
+          write(fd, "partial synthetic payload");
+          assert.equal(fs.fstatSync(fd).mode & 0o777, 0o600);
+          throw failure;
+        });
+      } else {
+        t.mock.method(fs, "renameSync", () => { throw failure; });
+      }
+      syncBuiltinESMExports();
+      try {
+        assert.throws(() => writeAtomicJson(path, { sequence: 2 }), (error) => error === failure);
+      } finally {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      }
+      assert.equal(readFileSync(path, "utf8"), previous);
+      assert.deepEqual(fs.readdirSync(dir), ["detail.json"]);
+    }
   });
 
   it("healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped", () => {
