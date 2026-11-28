@@ -133,6 +133,18 @@ If a lockfile still arrives without that block, CI fails with `ERR_PNPM_LOCKFILE
 - [ ] Merge the release PR only after its changelog matches shipped behavior
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, GHCR publish, native sidecar archives, and Docker Hub mirror (if secrets set) from the Release Please workflow
 
+## Issue and backlog hygiene (TS6 Manager)
+
+GitHub living trackers and ADHD Hub continuity threads serve different purposes. Keep the Hub-managed guidance block below intact; these are additional repository-specific rules.
+
+- Before opening an issue, search open and recently closed issues, related PRs and (when available) Hub threads. Prefer updating the existing issue for the same independently finishable outcome; link the appropriate workstream tracker. A new review round, agent handoff or correction does not by itself justify a new GitHub issue.
+- Keep one living tracker per workstream/release with an actionable Goal / Focus / Next / Resume header where Hub import is intended. Use checklists and linked independently actionable issues for implementation work; do not hide distinct contributor-ready bugs or features merely to reduce issue counts.
+- Use additive labels where available: `type:epic` for trackers; `area:security`, `area:discord`, `area:media`, `area:community` as applicable; `status:active`, `status:blocked`, `status:review`, `status:deferred` for verified states only; `priority:high` only when the release plan or maintainer supports it. Preserve existing labels, including Hub/source labels, and avoid conflicting status labels. Missing label permission is not a blocker to useful continuity.
+- Distinguish a living tracker from a short `[ADHD]` cloud mailbox cue. Follow Hub's inbox rules and use live MCP first; reuse an existing mailbox issue only for the same outcome. Do not overwrite another agent's unrelated thread or disable import just to reduce GitHub clutter.
+- Before consolidation, read the source issue and relevant comments/PRs, verify the Hub import/link and current state, and preserve every unresolved requirement, finding ID, dependency, source credit, acceptance gate and original issue reference. Update and verify the destination first; link back from the source. Close a superseded tracking issue only with maintainer approval and after confirming continuity is preserved; use a non-completion disposition for unfinished work. Never delete history. Keep independent actionable issues open as needed.
+- For P10/G1B, isolated fetcher, Discord security and bridge acceptance: issue housekeeping conveys **no** engineering GO, execution, integration, deployment, merge, release or credential authority. Preserve private sealed evidence and review independence; never republish private details. Distinguish verified acceptance from local candidate/test success. Never change sealed artifacts during triage.
+- At meaningful checkpoints, refresh the canonical tracker, check for duplicates, verify linked PR/CI/release status, and report what is active, blocked, deferred or superseded. Do not mark Hub threads done or close issues on the basis of a tracking consolidation alone.
+
 <!-- adhd-hub:project-agent:start -->
 <!-- adhd-hub:guidance-version:8 -->
 ## ADHD Hub continuity
