@@ -576,6 +576,25 @@ export class Ts3Client extends EventEmitter {
     const result = this.tryDecrypt(raw, packetType, packetId, gen, false);
     if (result) return result;
 
+    // The wire carries a 16-bit packet id, but the authenticated key derivation also includes
+    // a generation that advances on wrap. Only successful authentication may advance our
+    // counter; packet ids alone are untrusted, and the exact boundary packet may be lost.
+    // Keep the search bounded to adjacent generations. A delayed UDP packet from the previous
+    // generation is accepted without rolling the current generation back.
+    if (this.cryptoInitComplete && this.ivStruct) {
+      if (gen < 0xffffffff) {
+        const next = this.tryDecrypt(raw, packetType, packetId, gen + 1, false);
+        if (next) {
+          this.inGenerationCounter[packetType] = gen + 1;
+          return next;
+        }
+      }
+      if (gen > 0) {
+        const previous = this.tryDecrypt(raw, packetType, packetId, gen - 1, false);
+        if (previous) return previous;
+      }
+    }
+
     // Always try the other key mode as fallback
     const fallback = this.tryDecrypt(raw, packetType, packetId, gen, true);
     if (fallback) {
@@ -690,7 +709,9 @@ export class Ts3Client extends EventEmitter {
         break;
       case PacketType.Voice:
       case PacketType.VoiceWhisper:
-        this.emit("voice", data);
+        // The second argument is the transport packet type (0 Voice, 1 VoiceWhisper). Existing
+        // listeners ignore it; the Discord bridge uses it to forward channel voice only.
+        this.emit("voice", data, packetType);
         break;
     }
   }

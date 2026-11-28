@@ -1,0 +1,881 @@
+{
+ "generated": "2026-10-24",
+ "purpose": "Regression reproducers: each test run in its own process against the reviewed baseline, then against the fixed HEAD (all 128 pass).",
+ "baselines": {
+  "4548dc09948702eb6a039287af5807bac95d92a6": "reviewed baseline; used for the whisper (ts-session) and grouped-move (core) tests, because 57c1902 already contains those two fixes",
+  "57c1902": "baseline + whisper + grouped-move fixes + an injectable voice target/timing seam in DiscordBot, which the real-library harness needs to build a bot at all"
+ },
+ "shimsOnBaselineWorktree": [
+  "DiscordBot.voiceConnection: read-only accessor over the existing private connection (no behaviour change)",
+  "BridgeRuntime.idle(): awaits the existing queue twice (no behaviour change)",
+  "core/opus-packet.ts: identity splitter, modelling the baseline passing every packet through as one 20 ms frame"
+ ],
+ "classification": {
+  "RED-BEHAVIOURAL": "fails on the defect itself (wrong output, missing behaviour, time-out waiting for the fixed behaviour)",
+  "RED-NEW-API": "fails because the fix introduces the API the test calls; evidence of the change, not proof of the defect",
+  "GREEN-ON-BASELINE (guard)": "already passes on the baseline; protects behaviour the fixes must not break"
+ },
+ "results": [
+  {
+   "file": "src/adapters/ts-session.test.ts",
+   "test": "forwards channel Voice and never forwards VoiceWhisper",
+   "baseline": "4548dc0",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "only the channel voice packet is forwarded"
+  },
+  {
+   "file": "src/adapters/ts-session.test.ts",
+   "test": "fails closed when the transport does not say which kind of packet it is",
+   "baseline": "4548dc0",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "parses VId, speaker clid, codec and Opus",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "treats an empty payload as end-of-voice and rejects other codecs and short packets",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "fills slots first, then overflow, and gives each uniqueId one destination",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "keeps the slot across a rename (keyed on uniqueId) and re-join is idempotent",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "promotes the longest-waiting overflow uniqueId when a slot frees, removing it from overflow first",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "overflow carries audio only while it has members",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "elects slot 0 when the TeamSpeak channel is empty and the others are out of the channel",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "prefers overflow once it is in the channel and bumps the generation",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "does not move the receiver when a non-receiver bot recovers or fails",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "never elects overflow when it is not allowed in the channel",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "on receiver failure tears down, bumps the generation and elects exactly one successor",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "fails closed when no bot is healthy and rejects a stale or non-holder subscribe",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "reports a duplicate receiver when a non-holder keeps human subscriptions",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "bounds each source queue and counts overflow drops",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "re-checks admission at mix time so a queued stale frame is dropped",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "attenuates instead of clipping a loud sum",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "scrubs Discord-shaped tokens, bearer secrets, key=value secrets and registered secrets",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "keys on uniqueId and inherits shared ctid across a piped enter-view",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "a piped notifyclientmoved gives every entry the shared destination channel",
+   "baseline": "4548dc0",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly deep-equal:"
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "a piped notifyclientmoved with its own ctid per entry keeps each destination",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "a piped notifycliententerview with a mixed ctid keeps each entry's own channel",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "two simultaneous speakers land on two different bots with no crosstalk (tone analysis)",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "sends nobody to a second destination: passthrough Opus is byte-identical on its own bot only",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "mixes the three overflow speakers of an eight-user channel onto the overflow bot only",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "drops own voice, unknown speakers and speakers outside the mapped channel",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "excludes music bots by uniqueId",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "mixes two humans into one shared TeamSpeak stream",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "never forwards audio from a bridge bot (no re-forwarding)",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "kill receiver mid-speech: stale generation frames never reach TeamSpeak, successor sends one copy",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/core.test.ts",
+   "test": "sends end-of-voice after the humans go quiet",
+   "baseline": "4548dc0",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "protocol 0 (downgrade transition) while audio is queued and playing: no plaintext media leaves and the buffer is flushed",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "no unencrypted media on the wire"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "MLS group not ready (epoch transition) while audio is queued and playing: no plaintext media leaves and the buffer is flushed",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "no unencrypted media on the wire"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "resumes encrypted playback once DAVE is established again",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "delivers a DAVE-decrypted human frame while DAVE is established (control)",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "protocol 0: a plaintext packet is dropped, never decoded or queued, and reception is invalidated",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "plaintext frame never reached the pipeline"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "an established session in davey passthrough mode does not accept plaintext",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "plaintext rejected even while passthrough was enabled"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "holds the receiver through a short transition and reactivates it under a new generation",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for teardown on DAVE loss"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "declares the bot unhealthy only after the grace window, so the runtime can fail over",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for unhealthy after the grace window"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "losing DAVE on the receiver tears reception down under a new generation and fences queued frames",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "a non-receiver losing DAVE does not move the receiver or bump the generation",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/adapters/discord-bot.dave.test.ts",
+   "test": "a bot without DAVE is not elected as a successor",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/adapters/discord-bot.isolation.test.ts",
+   "test": "creates distinct VoiceConnection objects, each signalled through its own client's adapter",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "the second bot must not be handed the first bot's connection"
+  },
+  {
+   "file": "src/adapters/discord-bot.isolation.test.ts",
+   "test": "keeps a separate AudioPlayer per bot so one bot cannot replace the other's playback",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "the second bot must not be handed the first bot's connection"
+  },
+  {
+   "file": "src/adapters/discord-bot.isolation.test.ts",
+   "test": "destroying one bot's connection does not destroy the other's",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "the second bot must not be handed the first bot's connection"
+  },
+  {
+   "file": "src/adapters/discord-bot.isolation.test.ts",
+   "test": "uses one stable, unique group per bot across a rejoin",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "the second bot must not be handed the first bot's connection"
+  },
+  {
+   "file": "src/adapters/discord-bot.isolation.test.ts",
+   "test": "two bridge sessions in one process do not collide on the same bot id",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "a second session must not be handed the first session's connection"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "a human who is already talking when the bot takes over is received without a new speaking-start event",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for frames from the already-speaking human"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "a human already talking before the bot even finished joining is picked up once reception starts",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for frames"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "after a decrypt failure the subscription is restored while the human keeps talking (no new speaking-start)",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for audio restored without a speaking-start event"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "repeated decrypt failures fail closed: subscriptions stop and bounded recovery is requested",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for recovery requested after repeated failures"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "a frame arriving after closeAll never reaches the pipeline",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly deep-equal:"
+  },
+  {
+   "file": "src/adapters/discord-bot.receive.test.ts",
+   "test": "a stream error that surfaces after closeAll does not request recovery",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "this.o.onNeedRejoin is not a function"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "rebuilds the connection and the DAVE session instead of rejoining the ready one",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for a new connection after recovery"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "does not report intentional teardown during recovery as a connection failure",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for recovered"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "rejects stale reception from the replaced connection",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for recovered"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "verifies freshness: a recovery that hands back the same DAVE session fails and the bot is declared unhealthy",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for unhealthy after a recovery that was not fresh"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "is bounded: repeated recoveries stop at the limit and the bot goes unhealthy so the runtime can fail over",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for round 0"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "leave() does not emit unhealthy",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly deep-equal:"
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "a connection that drops by itself is still reported",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/adapters/discord-bot.recovery.test.ts",
+   "test": "destroy() while a join is waiting for Ready aborts it promptly and leaves nothing behind",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "the pending join was aborted, not left to time out"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "activates the healthy successor while the failed bot's reconnect is still pending",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for successor receiving while the reconnect hangs"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "activates the successor before any unrelated reconnect is attempted",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for a successor started receiving"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "a pending reconnect does not hold the queue: a new TeamSpeak user still gets a bot promptly",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for slot-2 joined while another reconnect hangs"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "preserves the receiveGeneration fence across the failover",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "a failed reconnect is retried with a bounded backoff and then given up on",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "timed out waiting for bounded retries"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "never joins again after stop, even when bots report their own intentional leave as a failure",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "slot-0 did not join again after stop"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "ignores directory and bot events after stop, and removes its listeners",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "cancels work that is still queued and aborts a join that is in flight, promptly",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "test timed out after 20000ms"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "stops the 20 ms ticker and invalidates reception",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "is idempotent and cannot be restarted",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "a failure while handling a TeamSpeak voice packet does not throw out of the UDP callback",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Got unwanted exception."
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "a failure while handling a Discord frame is contained and counted",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Got unwanted exception."
+  },
+  {
+   "file": "src/bridge/runtime.lifecycle.test.ts",
+   "test": "a failure inside the 20 ms ticker does not escape as an uncaught exception",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "native opus addon unavailable"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 1: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 2: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 3: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 4: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 5: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 6: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 7: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 8: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 9: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 10: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 11: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.race.test.ts",
+   "test": "seed 12: invariants hold across 60 interleaved operation groups",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveRestored is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "0 TeamSpeak users: only slot 0 is in Discord as the receiver and keeps its application name",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "1-5 TeamSpeak users: those slot bots join as [TS] Username and overflow stays out",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "6th user brings in [TS] Others and receive moves to overflow with teardown first; it moves back before overflow leaves",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "killing the receiver elects exactly one successor and the old bot cannot resubscribe",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "killing the receiver mid-speech: stale frames fenced, TeamSpeak hears one copy per tick",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "a non-receiver slot failure does not move receive and leaves the other slots running",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "no healthy bot left: Discord to TeamSpeak fails closed while other slots keep sending",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "flushes queued frames, stops receiving, and never forwards stale audio after DAVE returns",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "election.daveLost is not a function"
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "keeps the [TS] prefix and truncates the name to 32 UTF-16 units",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "never splits a surrogate pair at the cut",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/bridge/runtime.test.ts",
+   "test": "falls back for an empty name",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "a 40 ms decode is delivered as two whole 20 ms frames, in order and unaltered",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "both halves are delivered"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "a 60 ms decode is three frames and is not dropped by the per-source bound",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "The expression evaluated to a falsy value:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "two 10 ms decodes make one 20 ms frame with no gap between them",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "10 ms is not yet a whole frame; nothing is padded early"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "the partial tail is zero-padded only when the speaker ends, and that is counted",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "rejects PCM that is not whole stereo samples instead of mixing garbage",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "mixFrames refuses a frame of the wrong size instead of truncating it",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Missing expected exception (RangeError)."
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "splits a 40/60/120 ms multi-frame packet into whole 20 ms packets that each decode to 960 samples",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "passes a plain 20 ms packet through byte-identical",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "reports frames it cannot carry as unsupported, and garbage as invalid, never as a silent pass-through",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "a 40 ms packet reaches the slot bot as two 20 ms packets, not one packet played at the wrong speed",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "an unsupported duration is dropped and counted, never forwarded as a wrong-length frame",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "overflow path: a corrupt packet is dropped, the speaker's decoder is reset, and other speakers continue",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Got unwanted exception."
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "overflow path: an encoder failure in the tick does not escape",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Got unwanted exception."
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "Discord path: a corrupt packet is dropped, only that user's decoder is reset, the other human continues",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "releasing a user (stream closed) disposes its decoder",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "pipe.releaseUser is not a function"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "without any close notification, idle decoders are swept so churn cannot grow memory",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "live decoders stay bounded under churn (was 2001 after 2000 distinct users)"
+  },
+  {
+   "file": "src/core/audio-robustness.test.ts",
+   "test": "a teardown (new receiver generation) disposes every decoder",
+   "baseline": "57c1902",
+   "outcome": "RED-BEHAVIOURAL",
+   "message": "Expected values to be strictly equal:"
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "opens streams only for the admitted generation and counts subscriptions",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "a stale generation is rejected and tears the supervisor down",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "repeated decrypt errors request a rejoin (DAVE recovery path)",
+   "baseline": "57c1902",
+   "outcome": "RED-NEW-API",
+   "message": "this.o.onNeedRejoin is not a function"
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "delivers frames tagged with the generation they were opened under",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "is bounded: a burst keeps only the newest frames",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "ends after finish()",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  },
+  {
+   "file": "src/core/receive.test.ts",
+   "test": "requires an established DAVE session; protocol 0 or a not-ready session is refused",
+   "baseline": "57c1902",
+   "outcome": "GREEN-ON-BASELINE (guard)",
+   "message": null
+  }
+ ],
+ "summary": {
+  "('4548dc0', 'RED-BEHAVIOURAL')": 3,
+  "('4548dc0', 'GREEN-ON-BASELINE (guard)')": 29,
+  "('57c1902', 'RED-BEHAVIOURAL')": 49,
+  "('57c1902', 'GREEN-ON-BASELINE (guard)')": 22,
+  "('57c1902', 'RED-NEW-API')": 19
+ }
+}

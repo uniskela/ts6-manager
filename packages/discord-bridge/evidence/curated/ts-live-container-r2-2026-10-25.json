@@ -1,0 +1,113 @@
+{
+  "at": "2026-10-24T14:26:53.956Z",
+  "node": "v24.22.1",
+  "checks": [
+    {
+      "id": "ts-s2c-parse",
+      "title": "Live TS6 S2C voice packets parse to speaker CId and uniqueId",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "codec ids seen 5; layout VId u16 + CId u16 + codec u8 + Opus confirmed against 6.0.0-beta13"
+    },
+    {
+      "id": "two-speakers-two-bots",
+      "title": "Two simultaneous speakers routed to two separate bots, each carrying exactly one tone",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "Discord sinks are simulated recorders. Each bot's dominant tone is >100x the other (Goertzel). Per-bot: [{\"bot\":\"slot-0\",\"speakers\":1,\"frames\":76},{\"bot\":\"slot-1\",\"speakers\":1,\"frames\":76}]"
+    },
+    {
+      "id": "no-duplicate",
+      "title": "No uniqueId delivered to more than one destination",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "each speaker uniqueId appears under exactly one bot in the routing table"
+    },
+    {
+      "id": "overflow-eight",
+      "title": "Eight TeamSpeak users: five slot bots plus an overflow mix of the other three",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "overflow members 3; overflow carries tones 1050/1200/1350 Hz; all five slots carried audio"
+    },
+    {
+      "id": "d2t-send-path",
+      "title": "Mixed Discord-side audio is received by another TeamSpeak client from the one shared bridge client",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "listener heard 76 frames from bridge clid 1; both 500 Hz and 1500 Hz are in the single mix. Discord input is simulated."
+    }
+  ],
+  "data": {
+    "bridgeClientId": 1,
+    "channelId": 1,
+    "phaseA": {
+      "parseSamples": [
+        {
+          "clid": 2,
+          "codec": 5,
+          "uid": "rhowH8twLoJqy9hcCmmv/H/zQHzosiionicA6V9FIkY="
+        },
+        {
+          "clid": 3,
+          "codec": 5,
+          "uid": "+zAYEP2ghrmkZBO9xtGqhZaOo02rxGRDHIYTch7o4z0="
+        },
+        {
+          "clid": 3,
+          "codec": 5,
+          "uid": "+zAYEP2ghrmkZBO9xtGqhZaOo02rxGRDHIYTch7o4z0="
+        }
+      ],
+      "perBot": [
+        {
+          "bot": "slot-0",
+          "speakers": 1,
+          "frames": 76
+        },
+        {
+          "bot": "slot-1",
+          "speakers": 1,
+          "frames": 76
+        }
+      ],
+      "dropped": {}
+    },
+    "toneIsolation": [
+      {
+        "bot": "slot-0",
+        "f440": 0.039806115855553145,
+        "f1000": 2.4034901512299406e-9
+      },
+      {
+        "bot": "slot-1",
+        "f440": 1.0526093332182624e-8,
+        "f1000": 0.03933379022989817
+      }
+    ],
+    "phaseB": {
+      "overflowMembers": 3,
+      "overflowFrames": 70,
+      "overflowLatencyMs": {
+        "n": 70,
+        "p50": 26.261188999997103,
+        "p95": 48.52377200000046,
+        "max": 66.87207400001353
+      }
+    },
+    "ingressLatencyMs": {
+      "n": 152,
+      "p50": 1.1099409999987984,
+      "p95": 1.875554000002012,
+      "max": 5.8844499999977415
+    },
+    "resources": {
+      "cpuAvgPercent": 4.1,
+      "cpuMaxPercent": 100.2,
+      "rssAvgMb": 103.3,
+      "rssMaxMb": 114.2,
+      "samples": 219
+    },
+    "opus": "native"
+  }
+}

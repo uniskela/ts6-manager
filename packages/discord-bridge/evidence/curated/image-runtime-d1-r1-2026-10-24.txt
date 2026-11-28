@@ -1,0 +1,9 @@
+PASS  smoke:deps exits 0 with --network none, read-only root, cap-drop ALL
+PASS  runs as uid 1000
+PASS  node_modules is not writable
+PASS  .vendor is not writable
+PASS  src is not writable
+PASS  package.json is not writable
+PASS  evidence/ is the only writable path
+PASS  entrypoint is the preinstalled tsx (["./node_modules/.bin/tsx"])
+PASS  registry.npmjs.org is unreachable from the container
